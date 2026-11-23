@@ -1,0 +1,12 @@
+{
+    "server_file": "start.py",
+    "module_name": "app",
+    "host": "127.0.0.1",
+    "port": 2228,
+    "public_port": 5666,
+    "proxy_enabled": true,
+    "auto_start": true,
+    "use_venv": true,
+    "venv_name": ".venv",
+    "project_root": "/home/luke_cln/Bureau/PROJET/planning_nao"
+}

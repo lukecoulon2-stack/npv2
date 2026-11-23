@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#151020">
+    <meta name="description" content="Planning de garde, rendez-vous et notes de la famille.">
+    <title>Naoning · Planning familial</title>
+    <link rel="icon" href="{{ url_for('static', filename='tempo.png') }}" type="image/png">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='tempo-192.png') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='tempo.webmanifest') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body data-mode="{{ mode }}" data-welcome="{{ 'yes' if welcome else 'no' }}">
+    <svg xmlns="http://www.w3.org/2000/svg" class="symbols" aria-hidden="true">
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></symbol>
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21v-6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M16 3v4M8 3v4M3 10h18m-13 4h1m3 0h1m3 0h1m-9 3h1m3 0h1"/></symbol>
+        <symbol id="i-event" viewBox="0 0 24 24"><path d="M20 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6M7 3v4m9-4v4M3 10h13"/><circle cx="17" cy="16.5" r="5"/><path d="M17 14.1v2.6l1.6 1"/></symbol>
+        <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 3h13a2 2 0 0 1 2 2v11l-5 5H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M15 21v-4a1 1 0 0 1 1-1h4M7.5 8h8m-8 4h6"/></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9.5 4.1.4-1.1h4.2l.4 1.1.4 1.4 1.1.6 1.4-.3 1.2-.2 2.1 3.6-.8.9-1 1v1.3l1 1 .8.9-2.1 3.6-1.2-.2-1.4-.3-1.1.6-.4 1.4-.4 1.1H9.9l-.4-1.1-.4-1.4-1.1-.6-1.4.3-1.2.2-2.1-3.6.8-.9 1-1v-1.3l-1-1-.8-.9 2.1-3.6 1.2.2 1.4.3 1.1-.6.4-1.4Z"/><circle cx="12" cy="11.8" r="3"/></symbol>
+        <symbol id="i-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+        <symbol id="i-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+        <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></symbol>
+        <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-8 11-8 11s-8-6-8-11a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10 20a2 2 0 0 0 4 0M18 8a6 6 0 0 0-12 0c0 6-2 7-2 8h16c0-1-2-2-2-8Z"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 5 4 4M4 20l1-5L16 4a2.8 2.8 0 0 1 4 4L9 19l-5 1Z"/></symbol>
+        <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 7h15m-4-4 4 4-4 4m5 6H5m4 4-4-4 4-4"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16m-14 0 1 13h10l1-13M9 7V4h6v3m-5 4v5m4-5v5"/></symbol>
+        <symbol id="i-task" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M9 5V3m6 2V3m-7 10 3 3 5-6"/></symbol>
+        <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6c-2-2-5-3-9-2v15c4-1 7 0 9 2 2-2 5-3 9-2V4c-4-1-7 0-9 2Zm0 0v15M6 9c1-.1 2 .2 3 .7m6 0c1-.5 2-.8 3-.7"/></symbol>
+    </svg>
+    <a class="skip-link" href="#main">Aller au contenu</a>
+    <header class="app-header">
+        <div class="header-inner">
+            <a href="/" class="wordmark" data-route="/" aria-label="Naoning, accueil">
+                <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg></span>
+                <span>Naoning</span>
+            </a>
+            <div class="header-actions">
+                {% if mode == "bench" %}<span class="bench-indicator" title="Base temporaire pour ce lancement">Mode bench</span>{% endif %}
+                <button type="button" class="icon-button" data-search aria-label="Rechercher"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
+                <a href="/reglages" class="settings-link" data-route="/reglages" aria-label="Réglages">
+                    <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
+                    <span>Réglages</span>
+                </a>
+            </div>
+        </div>
+    </header>
+    <main id="main" class="app-main" tabindex="-1">
+        <div id="page">
+            <section class="home-hero">
+                <div class="hero-art" aria-hidden="true"></div>
+                <div class="hero-content">
+                    <div class="date-pill" id="hero-date" hidden></div>
+                    <h1>Planning<br><span>familial.</span></h1>
+                    <p>Gardes, rendez-vous et notes<br class="mobile-break"> au même endroit.</p>
+                </div>
+            </section>
+            <section class="spaces" aria-labelledby="spaces-heading">
+                <div class="section-heading"><h2 id="spaces-heading">Mes espaces</h2></div>
+                <div class="space-list">
+                    <a class="space-card tone-planning" href="/planning" data-route="/planning">
+                        <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg></span>
+                        <span class="space-text"><strong>Mon planning</strong><span>Alternance, gardes et notes par jour</span></span>
+                        <span class="space-open"><svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></span>
+                    </a>
+                    <a class="space-card tone-events" href="/evenements" data-route="/evenements">
+                        <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-event"></use></svg></span>
+                        <span class="space-text"><strong>Mes événements</strong><span>Rendez-vous et rappels</span></span>
+                        <span class="space-open"><svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></span>
+                    </a>
+                    <a class="space-card tone-notes" href="/notes" data-route="/notes">
+                        <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-note"></use></svg></span>
+                        <span class="space-text"><strong>Notes</strong><span>Votre bloc-notes</span></span>
+                        <span class="space-open"><svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></span>
+                    </a>
+                    <a class="space-card tone-tasks" href="/a-faire" data-route="/a-faire">
+                        <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-task"></use></svg></span>
+                        <span class="space-text"><strong>À faire</strong><span>Échéances et photos de réalisation</span></span>
+                        <span class="space-open"><svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></span>
+                    </a>
+                    <a class="space-card tone-courses" href="/cours" data-route="/cours">
+                        <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-book"></use></svg></span>
+                        <span class="space-text"><strong>Cours</strong><span>Fichiers Markdown classés par matière</span></span>
+                        <span class="space-open"><svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></span>
+                    </a>
+                </div>
+                <div id="home-setup"></div>
+            </section>
+        </div>
+        <noscript><p class="empty">Activez JavaScript pour utiliser Naoning.</p></noscript>
+    </main>
+    <footer class="app-credit">Développé et déployé par Luke Coulon</footer>
+    <nav class="tab-bar" aria-label="Navigation principale">
+        <a class="tone-planning" href="/" data-route="/" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg><span>Accueil</span></a>
+        <a class="tone-planning" href="/planning" data-route="/planning"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg><span>Planning</span></a>
+        <a class="tone-events" href="/evenements" data-route="/evenements" aria-label="Événements"><svg class="icon" aria-hidden="true"><use href="#i-event"></use></svg><span>Agenda</span></a>
+        <a class="tone-notes" href="/notes" data-route="/notes"><svg class="icon" aria-hidden="true"><use href="#i-note"></use></svg><span>Notes</span></a>
+        <a class="tone-tasks" href="/a-faire" data-route="/a-faire"><svg class="icon" aria-hidden="true"><use href="#i-task"></use></svg><span>À faire</span></a>
+        <a class="tone-courses" href="/cours" data-route="/cours"><svg class="icon" aria-hidden="true"><use href="#i-book"></use></svg><span>Cours</span></a>
+    </nav>
+    <dialog id="sheet" class="sheet" aria-labelledby="sheet-title"></dialog>
+    <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
