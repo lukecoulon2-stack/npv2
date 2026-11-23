@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from flask import Flask, jsonify, make_response, render_template, request, send_from_directory
+from flask import Flask, jsonify, make_response, redirect, render_template, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from .database import transaction
@@ -117,6 +117,7 @@ def create_app(database, mode):
     @app.get("/reglages")
     @app.get("/a-faire")
     @app.get("/cours")
+    @app.get("/jeux")
     def index():
         device, welcome = log_connection(database)
         response = make_response(render_template("index.html", mode=mode, welcome=welcome))
@@ -127,6 +128,10 @@ def create_app(database, mode):
                 httponly=True, samesite="Lax", secure=request.is_secure,
             )
         return response
+
+    @app.get("/applications")
+    def former_applications():
+        return redirect("/jeux")
 
     @app.get("/service-worker.js")
     def service_worker():

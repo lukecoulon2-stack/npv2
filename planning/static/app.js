@@ -1,4 +1,5 @@
 import { capitalize, formatDate, todayIn } from "./calendar.js";
+import { renderGames } from "./minigames.js";
 import { renderCourses } from "./courses.js";
 import { openParentSettings, renderPlanning, renderSettings } from "./custody.js";
 import { renderEvents, renderNotes } from "./records.js";
@@ -29,6 +30,7 @@ const titles = {
     "/notes": "Notes",
     "/a-faire": "À faire",
     "/cours": "Cours",
+    "/jeux": "Mini-jeux",
     "/reglages": "Réglages",
 };
 
@@ -116,6 +118,8 @@ function render() {
         renderTasks(view, selectedRecord("task"));
     } else if (current === "/cours") {
         renderCourses(view, selectedRecord("course"));
+    } else if (current === "/jeux") {
+        renderGames(view, new URLSearchParams(location.search).get("jeu"));
     } else if (current === "/reglages") {
         renderSettings(view, session, setupPlanning, async () => {
             await loadSession();
