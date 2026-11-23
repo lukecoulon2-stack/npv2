@@ -1,11 +1,12 @@
 import { capitalize, formatDate, todayIn } from "./calendar.js";
 import { renderGames } from "./minigames.js";
 import { renderCourses } from "./courses.js";
-import { openParentSettings, renderPlanning, renderSettings } from "./custody.js";
+import { openParentSettings, renderPlanning } from "./custody.js";
 import { renderEvents, renderNotes } from "./records.js";
-import { askMaintenanceCode, showWelcome } from "./maintenance.js";
+import { showWelcome } from "./maintenance.js";
 import { startReminders } from "./reminders.js";
-import { openSearch, openTrash } from "./organizer.js";
+import { openSearch } from "./organizer.js";
+import { renderSettings } from "./settings.js";
 import { renderTasks } from "./tasks.js";
 import { api, closeSheet, empty, errorBlock, icon } from "./ui.js";
 
@@ -13,6 +14,7 @@ const main = document.querySelector("#main");
 const page = document.querySelector("#page");
 const home = page.cloneNode(true);
 const builtInZone = "Europe/Paris";
+const siteName = document.body.dataset.siteName;
 let session = { settings: null, today: todayIn(builtInZone) };
 let sessionError;
 let ready = false;
@@ -35,7 +37,7 @@ const titles = {
 };
 
 function updateNavigation() {
-    document.title = current === "/" ? "Naoning · Planning familial" : `${titles[current]} · Naoning`;
+    document.title = current === "/" ? `${siteName} · Planning familial` : `${titles[current]} · ${siteName}`;
     document.querySelectorAll('.tab-bar [data-route], .settings-link').forEach(link => {
         if (link.dataset.route === current) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
@@ -64,7 +66,7 @@ function updateHome() {
 async function setupPlanning() {
     openParentSettings(session, async () => {
         await loadSession();
-        if (current === "/" || current === "/reglages") move("/planning");
+        if (current === "/") move("/planning");
         else render();
     });
 }
@@ -98,7 +100,7 @@ function render() {
     if (!ready) {
         view.innerHTML = sessionError
             ? `${errorBlock(sessionError)}<button class="button secondary" type="button" data-retry-session>Réessayer</button>`
-            : '<p class="empty panel">Connexion à Naoning…</p>';
+            : '<p class="empty panel">Chargement…</p>';
         const retry = view.querySelector("[data-retry-session]");
         if (retry) retry.onclick = connect;
         return;
@@ -121,16 +123,10 @@ function render() {
     } else if (current === "/jeux") {
         renderGames(view, new URLSearchParams(location.search).get("jeu"));
     } else if (current === "/reglages") {
-        renderSettings(view, session, setupPlanning, async () => {
+        renderSettings(view, session, new URLSearchParams(location.search).get("section"), async () => {
             await loadSession();
             render();
         });
-        view.insertAdjacentHTML("beforeend", `<section class="view-section section-panel panel">
-            <div class="flow"><button type="button" class="button secondary" data-trash>${icon("trash")} Corbeille</button>
-            <button type="button" class="button secondary" data-maintenance>${icon("settings")} Maintenance</button></div>
-        </section>`);
-        view.querySelector("[data-trash]").onclick = openTrash;
-        view.querySelector("[data-maintenance]").onclick = askMaintenanceCode;
     } else {
         view.innerHTML = empty("Page introuvable");
     }
@@ -167,7 +163,8 @@ function transitionCard(card, backwards) {
 
 function scrollToTopAndFocus() {
     window.scrollTo(0, 0);
-    main.focus({ preventScroll: true });
+    const settingsTitle = page.querySelector("#settings-pane-title");
+    (settingsTitle ?? main).focus({ preventScroll: true });
 }
 
 async function move(destination, { card, fromHistory = false } = {}) {
@@ -190,6 +187,7 @@ async function move(destination, { card, fromHistory = false } = {}) {
     }
     current = next;
     render();
+    void api("/activity/page", "POST", { path: current }).catch(() => {});
     scrollToTopAndFocus();
     const origin = next === "/" && page.querySelector(`.space-card[data-route="${previous}"]`);
     const returning = animate && origin && !incoming ? transitionCard(origin, true) : null;

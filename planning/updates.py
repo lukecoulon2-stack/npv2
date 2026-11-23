@@ -39,7 +39,7 @@ def source_paths(directory):
 def validate_sources(directory):
     paths = list(source_paths(directory))
     if not REQUIRED.issubset(paths):
-        raise ValueError("GitHub ne contient pas encore les sources complètes de Naoning.")
+        raise ValueError("GitHub ne contient pas encore les sources complètes de Planneli.")
     try:
         for relative in paths:
             if relative.suffix == ".py":
@@ -58,7 +58,7 @@ def fetch_release(project):
     directory = project / WORK_DIRECTORY
     directory.mkdir(mode=0o700, exist_ok=True)
     if pending_revision(project):
-        raise ValueError("Une mise à jour est déjà prête. Redémarrez Naoning pour l’appliquer.")
+        raise ValueError("Une mise à jour est déjà prête. Redémarrez Planneli pour l’appliquer.")
     environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
 
     def git(*args):

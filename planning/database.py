@@ -4,9 +4,14 @@ from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from .course_markdown import remove_legacy_course_metadata
+from .course_storage import CourseStorageError, synchronize_course_files
+
 
 DATABASE_NAME = "planning.sqlite3"
 APPLICATION_ID = 0x54454D50
+WORKSPACE_RECORDS = ("carers", "day_notes", "events", "notes", "tasks")
+WORKSPACE_TABLES = ("settings", "weekend_switches", "day_overrides", "app_preferences", *WORKSPACE_RECORDS)
 MIGRATIONS = (
     (
         """CREATE TABLE settings (
@@ -103,6 +108,78 @@ MIGRATIONS = (
         "CREATE INDEX tasks_by_course ON tasks(course_id)",
         *(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT" for table in ("notes", "events", "tasks", "courses")),
     ),
+    (
+        "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, share_code TEXT UNIQUE)",
+        "INSERT INTO workspaces(id) VALUES (0)",
+        """CREATE TABLE accounts (
+            id INTEGER PRIMARY KEY,
+            username TEXT NOT NULL, username_key TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+            own_workspace INTEGER NOT NULL UNIQUE REFERENCES workspaces(id),
+            joined_workspace INTEGER REFERENCES workspaces(id)
+        )""",
+        "CREATE INDEX accounts_by_joined_workspace ON accounts(joined_workspace)",
+        """CREATE TABLE account_logins (
+            token_hash TEXT PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            expires_at INTEGER NOT NULL
+        )""",
+        "CREATE INDEX account_logins_by_expiry ON account_logins(expires_at)",
+        "ALTER TABLE settings RENAME TO previous_settings",
+        """CREATE TABLE settings (
+            workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(id),
+            name_a TEXT NOT NULL, color_a TEXT NOT NULL,
+            name_b TEXT NOT NULL, color_b TEXT NOT NULL,
+            anchor TEXT NOT NULL, first_parent INTEGER NOT NULL CHECK (first_parent IN (1, 2)),
+            timezone TEXT NOT NULL
+        )""",
+        """INSERT INTO settings SELECT 0, name_a, color_a, name_b, color_b, anchor, first_parent, timezone
+           FROM previous_settings""",
+        "DROP TABLE previous_settings",
+        "ALTER TABLE weekend_switches RENAME TO previous_weekend_switches",
+        """CREATE TABLE weekend_switches (
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            year INTEGER NOT NULL CHECK (year BETWEEN 1 AND 9999), PRIMARY KEY (workspace_id, year)
+        )""",
+        "INSERT INTO weekend_switches SELECT 0, year FROM previous_weekend_switches",
+        "DROP TABLE previous_weekend_switches",
+        "ALTER TABLE day_overrides RENAME TO previous_day_overrides",
+        """CREATE TABLE day_overrides (
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            day TEXT NOT NULL, parent INTEGER NOT NULL CHECK (parent IN (1, 2)), PRIMARY KEY (workspace_id, day)
+        )""",
+        "INSERT INTO day_overrides SELECT 0, day, parent FROM previous_day_overrides",
+        "DROP TABLE previous_day_overrides",
+        "ALTER TABLE app_preferences RENAME TO previous_app_preferences",
+        """CREATE TABLE app_preferences (
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (workspace_id, key)
+        )""",
+        "INSERT INTO app_preferences SELECT 0, key, value FROM previous_app_preferences",
+        "DROP TABLE previous_app_preferences",
+        *(f"ALTER TABLE {table} ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)" for table in WORKSPACE_RECORDS),
+        *(f"UPDATE {table} SET workspace_id = 0" for table in WORKSPACE_RECORDS),
+        "CREATE INDEX carers_by_workspace ON carers(workspace_id)",
+        "DROP INDEX day_notes_by_day",
+        "CREATE INDEX day_notes_by_day ON day_notes(workspace_id, day, id)",
+        "DROP INDEX events_by_day",
+        "CREATE INDEX events_by_day ON events(workspace_id, day, start_time, id)",
+        "DROP INDEX events_due",
+        "CREATE INDEX events_due ON events(workspace_id, remind_at) WHERE remind_at IS NOT NULL",
+        "CREATE INDEX notes_by_workspace ON notes(workspace_id, updated_at DESC, id DESC)",
+        "CREATE INDEX tasks_by_workspace ON tasks(workspace_id)",
+    ),
+    (
+        "ALTER TABLE courses ADD COLUMN theme TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE courses ADD COLUMN level TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE courses ADD COLUMN difficulty TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE courses ADD COLUMN added_at TEXT NOT NULL DEFAULT ''",
+        "UPDATE courses SET added_at = updated_at",
+    ),
+    ("ALTER TABLE accounts ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",),
+    (remove_legacy_course_metadata,),
+    (
+        "ALTER TABLE visitors ADD COLUMN account_id INTEGER REFERENCES accounts(id)",
+        "CREATE INDEX visitors_by_account ON visitors(account_id)",
+    ),
 )
 
 
@@ -115,11 +192,16 @@ def connect(path, *, read_only=False):
 
 
 @contextmanager
-def transaction(path, *, write=False):
+def transaction(path, *, write=False, course_files=False):
     with closing(connect(path)) as connection:
         connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         with connection:
             yield connection
+            if course_files:
+                try:
+                    synchronize_course_files(connection, path.parent / "cours")
+                except OSError as error:
+                    raise CourseStorageError("Le dossier des cours est inaccessible.") from error
 
 
 def private_file(path):
@@ -134,20 +216,23 @@ def initialize(path):
     except FileExistsError:
         pass
 
-    with transaction(path, write=True) as connection:
+    with transaction(path, write=True, course_files=True) as connection:
         application_id = connection.execute("PRAGMA application_id").fetchone()[0]
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if application_id == 0 and version == 0:
             if connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone():
-                raise ValueError(f"{path} n’est pas une base Naoning.")
+                raise ValueError(f"{path} n’est pas une base Planneli.")
             connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
         elif application_id != APPLICATION_ID:
-            raise ValueError(f"{path} n’est pas une base Naoning.")
+            raise ValueError(f"{path} n’est pas une base Planneli.")
         if version > len(MIGRATIONS):
-            raise ValueError(f"{path} nécessite une version plus récente de Naoning.")
+            raise ValueError(f"{path} nécessite une version plus récente de Planneli.")
         for number, migration in enumerate(MIGRATIONS[version:], start=version + 1):
             for statement in migration:
-                connection.execute(statement)
+                if callable(statement):
+                    statement(connection)
+                else:
+                    connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {number}")
 
 
@@ -155,7 +240,7 @@ def validate_backup(connection, path):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     if application_id != APPLICATION_ID or not 1 <= version <= len(MIGRATIONS):
-        raise ValueError(f"{path} n’est pas une base Naoning compatible.")
+        raise ValueError(f"{path} n’est pas une base Planneli compatible.")
     if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
         raise ValueError(f"{path} est endommagée.")
 

@@ -24,6 +24,7 @@ export async function api(path, method = "GET", data) {
     try {
         const headers = { Accept: "application/json" };
         const multipart = data instanceof FormData;
+        if (document.body.dataset.account) headers["X-Tempo-Account"] = document.body.dataset.account;
         if (method !== "GET") headers["X-Tempo-Request"] = "1";
         if (data !== undefined && !multipart) headers["Content-Type"] = "application/json";
         response = await fetch(`/api${path}`, {
@@ -33,11 +34,12 @@ export async function api(path, method = "GET", data) {
             cache: "no-store",
         });
     } catch {
-        throw new Error("Le serveur Naoning est injoignable. Réessayez.");
+        throw new Error("Le serveur est injoignable. Réessayez.");
     }
     if (response.status === 204) return null;
     const body = await response.json().catch(() => null);
     if (!response.ok || body === null) {
+        if (body?.refresh && document.body.dataset.account) location.reload();
         const error = new Error(body?.error || "Une erreur est survenue. Réessayez.");
         error.status = response.status;
         throw error;
@@ -72,95 +74,322 @@ export function textarea(name, value, attributes = "") {
     return `<textarea name="${name}" ${attributes}>\n${escapeHtml(value)}</textarea>`;
 }
 
-function styleDropdown(select) {
+export async function copyText(control) {
+    if (navigator.clipboard) {
+        try {
+            await navigator.clipboard.writeText(control.value);
+            return true;
+        } catch {
+            // Use text selection when the clipboard API is unavailable.
+        }
+    }
+    const details = control.closest("details");
+    if (details) details.open = true;
+    control.focus();
+    control.select();
+    try { return document.execCommand("copy"); }
+    catch { return false; }
+}
+
+const styledSelects = new WeakMap();
+let activeDropdown;
+
+for (const event of ["pointerdown", "focusin"]) {
+    document.addEventListener(event, ({ target }) => {
+        if (activeDropdown && !activeDropdown.wrapper.contains(target)) activeDropdown.close();
+    });
+}
+document.addEventListener("scroll", () => activeDropdown?.position(), true);
+window.addEventListener("resize", () => activeDropdown?.position());
+window.visualViewport?.addEventListener("resize", () => activeDropdown?.position());
+window.visualViewport?.addEventListener("scroll", () => activeDropdown?.position());
+
+function choiceKey(value) {
+    return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+}
+
+function wrapChoice(control) {
     const wrapper = document.createElement("div");
     wrapper.className = "dropdown";
-    select.before(wrapper);
-    wrapper.append(select);
+    control.before(wrapper);
+    wrapper.append(control);
+    return wrapper;
+}
+
+function choicePopup(wrapper, trigger, onPick, label, toggle = trigger) {
+    const list = document.createElement("div");
+    list.className = "dropdown-list";
+    list.id = `${trigger.id}-list`;
+    list.setAttribute("role", "listbox");
+    if (label) list.setAttribute("aria-labelledby", label.id);
+    list.hidden = true;
+    const floating = typeof list.showPopover === "function";
+    if (floating) list.setAttribute("popover", "manual");
+    wrapper.append(list);
+
+    trigger.setAttribute("role", "combobox");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-controls", list.id);
+    toggle.setAttribute("aria-controls", list.id);
+    let entries = [];
+    let active = -1;
+
+    function expanded(value) {
+        trigger.setAttribute("aria-expanded", String(value));
+        toggle.setAttribute("aria-expanded", String(value));
+    }
+    expanded(false);
+
+    function close() {
+        if (activeDropdown !== popup) return;
+        activeDropdown = undefined;
+        if (floating && list.matches(":popover-open")) list.hidePopover();
+        list.hidden = true;
+        trigger.removeAttribute("aria-activedescendant");
+        expanded(false);
+    }
+
+    function position() {
+        if (!trigger.isConnected || !trigger.getClientRects().length) {
+            close();
+            return;
+        }
+        if (!floating) return;
+        const rect = trigger.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const viewportTop = viewport?.offsetTop ?? 0;
+        const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+        if (rect.bottom <= viewportTop || rect.top >= viewportBottom) {
+            close();
+            return;
+        }
+        const gap = 6;
+        const above = rect.top - viewportTop - gap;
+        const below = viewportBottom - rect.bottom - gap;
+        const viewportLeft = viewport?.offsetLeft ?? 0;
+        const viewportWidth = viewport?.width ?? window.innerWidth;
+        const width = Math.min(Math.max(rect.width, 220), viewportWidth - 16);
+        list.style.width = `${width}px`;
+        list.style.left = `${Math.max(viewportLeft + 8, Math.min(rect.left, viewportLeft + viewportWidth - width - 8))}px`;
+        const opensAbove = below < Math.min(list.scrollHeight + 2, 272) && above > below;
+        list.style.maxHeight = `${Math.max(0, Math.min(272, (opensAbove ? above : below) - 6))}px`;
+        list.style.top = `${opensAbove ? rect.top - gap - list.offsetHeight : rect.bottom + gap}px`;
+    }
+
+    function highlight(index) {
+        const option = list.children[index];
+        if (!option || entries[index].disabled) return;
+        list.children[active]?.removeAttribute("data-highlighted");
+        active = index;
+        option.setAttribute("data-highlighted", "");
+        trigger.setAttribute("aria-activedescendant", option.id);
+        const top = option.offsetTop;
+        const bottom = top + option.offsetHeight;
+        if (top < list.scrollTop) list.scrollTop = top;
+        if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+    }
+
+    function pick(index) {
+        const entry = entries[index];
+        if (!entry || entry.disabled) return;
+        close();
+        onPick(entry);
+    }
+
+    function show(options) {
+        if (!options.length || !trigger.getClientRects().length) { close(); return; }
+        if (activeDropdown !== popup) activeDropdown?.close();
+        entries = options;
+        active = -1;
+        trigger.removeAttribute("aria-activedescendant");
+        list.replaceChildren(...options.map((entry, index) => {
+            const option = document.createElement("div");
+            option.id = `${list.id}-option-${index}`;
+            option.setAttribute("role", "option");
+            option.setAttribute("aria-selected", String(entry.selected));
+            if (entry.disabled) option.setAttribute("aria-disabled", "true");
+            option.innerHTML = `<span></span>${icon("check")}`;
+            option.firstElementChild.textContent = entry.label;
+            option.onclick = () => pick(index);
+            return option;
+        }));
+        if (activeDropdown !== popup) {
+            activeDropdown = popup;
+            list.hidden = false;
+            if (floating) list.showPopover();
+            expanded(true);
+        }
+        position();
+        if (activeDropdown !== popup) return;
+        const selected = options.findIndex(entry => entry.selected && !entry.disabled);
+        highlight(selected >= 0 ? selected : options.findIndex(entry => !entry.disabled));
+    }
+
+    function move(key) {
+        const available = entries.map((entry, index) => entry.disabled ? -1 : index).filter(index => index >= 0);
+        const current = available.indexOf(active);
+        if (key === "Home") highlight(available[0]);
+        else if (key === "End") highlight(available.at(-1));
+        else if (key === "ArrowDown") highlight(available[Math.min(current + 1, available.length - 1)]);
+        else highlight(available[Math.max(0, current - 1)]);
+    }
+
+    list.addEventListener("mousedown", event => {
+        if (event.target.closest('[role="option"]')) event.preventDefault();
+    });
+    const popup = {
+        wrapper, close, position, show, move,
+        isOpen: () => activeDropdown === popup,
+        pick: () => pick(active),
+        find: prefix => highlight(entries.findIndex(entry => !entry.disabled && choiceKey(entry.label).startsWith(prefix))),
+    };
+    return popup;
+}
+
+function choiceKeys(trigger, popup, open, editable = false) {
+    let search = "";
+    let lastKey = 0;
+    trigger.addEventListener("keydown", event => {
+        const { key } = event;
+        if (key === "Tab") { popup.close(); return; }
+        if (key === "Escape" && popup.isOpen()) {
+            event.preventDefault();
+            event.stopPropagation();
+            popup.close();
+            return;
+        }
+        if (event.isComposing) return;
+        if (popup.isOpen() && (key === "Enter" || (!editable && key === " "))) {
+            event.preventDefault();
+            popup.pick();
+            return;
+        }
+        const edge = !editable && (key === "Home" || key === "End");
+        if (key === "ArrowDown" || key === "ArrowUp" || edge) {
+            event.preventDefault();
+            if (popup.isOpen()) popup.move(key);
+            else {
+                open();
+                if (edge) popup.move(key);
+            }
+            return;
+        }
+        if (!editable && key.length === 1 && key !== " " && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            const wasOpen = popup.isOpen();
+            if (!wasOpen) open();
+            const now = performance.now();
+            search = (wasOpen && now - lastKey < 700 ? search : "") + choiceKey(key);
+            lastKey = now;
+            popup.find(search);
+        }
+    });
+}
+
+function changeChoice(control) {
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+export function styleDropdown(select) {
+    const styled = styledSelects.get(select);
+    if (styled) {
+        styled.sync();
+        return styled.trigger;
+    }
+    if (select.multiple || select.size > 1) return select;
+
+    const wrapper = wrapChoice(select);
     select.hidden = true;
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "dropdown-trigger";
     trigger.id = `${select.id}-trigger`;
-    trigger.setAttribute("aria-expanded", "false");
-    trigger.setAttribute("aria-haspopup", "listbox");
-    const list = document.createElement("div");
-    list.id = `${select.id}-list`;
-    list.className = "dropdown-list";
-    list.setAttribute("role", "listbox");
-    list.hidden = true;
-    trigger.setAttribute("aria-controls", list.id);
+    trigger.innerHTML = `<span></span>${icon("right")}`;
+    wrapper.append(trigger);
     const label = select.labels?.[0];
     if (label) {
+        label.id ||= `${select.id}-label`;
         label.htmlFor = trigger.id;
-        list.setAttribute("aria-label", label.textContent);
+        trigger.setAttribute("aria-labelledby", label.id);
     }
-    wrapper.append(trigger, list);
-    const close = (focus = false) => {
-        list.hidden = true;
-        trigger.setAttribute("aria-expanded", "false");
-        if (focus) trigger.focus();
-    };
+
+    const popup = choicePopup(wrapper, trigger, entry => {
+        if (select.selectedIndex === entry.index) return;
+        select.selectedIndex = entry.index;
+        sync();
+        changeChoice(select);
+    }, label);
+    const open = () => popup.show(Array.from(select.options, (option, index) => ({
+        index, label: option.label, selected: option.selected, disabled: option.matches(":disabled"),
+    })));
     function sync() {
-        trigger.innerHTML = `<span>${escapeHtml(select.selectedOptions[0]?.textContent.trim() || "Choisir")}</span>${icon("right")}`;
-        trigger.disabled = select.disabled;
-        list.replaceChildren(...Array.from(select.options, (option, index) => {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.tabIndex = -1;
-            button.disabled = option.disabled;
-            button.setAttribute("role", "option");
-            button.setAttribute("aria-selected", String(option.selected));
-            button.textContent = option.textContent.trim();
-            button.onclick = () => {
-                select.selectedIndex = index;
-                select.dispatchEvent(new Event("input", { bubbles: true }));
-                select.dispatchEvent(new Event("change", { bubbles: true }));
-                close(true);
-            };
-            return button;
-        }));
+        trigger.firstElementChild.textContent = select.selectedOptions[0]?.label.trim() || "Choisir";
+        trigger.disabled = select.matches(":disabled");
+        if (trigger.disabled) popup.close();
+        else if (popup.isOpen()) open();
     }
-    function options() { return [...list.querySelectorAll("button:enabled")]; }
-    function open(direction) {
-        wrapper.closest("dialog").querySelectorAll(".dropdown-trigger[aria-expanded=true]").forEach(other => {
-            if (other !== trigger) other.click();
-        });
-        list.hidden = false;
-        trigger.setAttribute("aria-expanded", "true");
-        const choices = options();
-        (direction === "last" ? choices.at(-1) : list.querySelector('[aria-selected="true"]:enabled') || choices[0])?.focus();
-    }
-    trigger.onclick = () => list.hidden ? open() : close(true);
-    wrapper.addEventListener("focusout", event => {
-        if (!wrapper.contains(event.relatedTarget)) close();
-    });
-    wrapper.addEventListener("keydown", event => {
-        if (event.key === "Escape" && !list.hidden) {
-            event.preventDefault();
-            close(true);
-            return;
-        }
-        if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-        event.preventDefault();
-        if (list.hidden) { open(event.key === "End" ? "last" : undefined); return; }
-        const choices = options();
-        const index = choices.indexOf(document.activeElement);
-        const step = event.key === "ArrowUp" ? -1 : 1;
-        const next = event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1
-            : (index + step + choices.length) % choices.length;
-        choices[next]?.focus();
-    });
+    trigger.onclick = () => popup.isOpen() ? popup.close() : open();
+    choiceKeys(trigger, popup, open);
     select.addEventListener("change", sync);
     select.addEventListener("invalid", event => {
         event.preventDefault();
+        trigger.focus();
         open();
     });
     new MutationObserver(sync).observe(select, { subtree: true, childList: true, characterData: true, attributes: true });
+    styledSelects.set(select, { trigger, sync });
     sync();
+    return trigger;
+}
+
+function styleSuggestions(input) {
+    const options = input.list?.options;
+    if (!options?.length) return;
+    const wrapper = wrapChoice(input);
+    wrapper.classList.add("dropdown-suggest");
+    input.removeAttribute("list");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.tabIndex = -1;
+    toggle.className = "dropdown-toggle";
+    toggle.innerHTML = icon("right");
+    const label = input.labels?.[0];
+    if (label) label.id ||= `${input.id}-label`;
+    toggle.setAttribute("aria-label", label ? `Suggestions pour ${label.textContent.trim()}` : "Suggestions");
+    input.setAttribute("aria-autocomplete", "list");
+    wrapper.append(toggle);
+
+    let picking = false;
+    const popup = choicePopup(wrapper, input, entry => {
+        input.focus({ preventScroll: true });
+        if (input.value === entry.value) return;
+        input.value = entry.value;
+        picking = true;
+        changeChoice(input);
+        picking = false;
+    }, label, toggle);
+    const open = (query = "") => {
+        const entries = Array.from(options, option => ({
+            value: option.value, label: option.label || option.value,
+            selected: option.value === input.value, disabled: option.disabled,
+        }));
+        popup.show(entries.filter(entry => choiceKey(entry.label).includes(query)));
+    };
+    toggle.onclick = () => {
+        if (input.disabled) return;
+        input.focus({ preventScroll: true });
+        if (popup.isOpen()) popup.close();
+        else open();
+    };
+    choiceKeys(input, popup, open, true);
+    input.addEventListener("input", () => {
+        if (!picking) open(choiceKey(input.value));
+    });
 }
 
 export function sheet(title, body, subtitle = "") {
+    activeDropdown?.close();
     dialog.innerHTML = `<div class="sheet-window">
         <header class="sheet-header"><div>
             <h2 id="sheet-title" tabindex="-1">${escapeHtml(title)}</h2>
@@ -169,6 +398,7 @@ export function sheet(title, body, subtitle = "") {
         ${body}
     </div>`;
     dialog.querySelectorAll("select").forEach(styleDropdown);
+    dialog.querySelectorAll("input[list]").forEach(styleSuggestions);
     dialog.querySelector("[data-close]").onclick = closeSheet;
     if (!dialog.open) {
         dialog.showModal();
@@ -184,6 +414,7 @@ export function activeSheet(container) {
 }
 
 export function closeSheet() {
+    activeDropdown?.close();
     if (dialog.open) dialog.close();
     document.body.classList.remove("sheet-open");
 }

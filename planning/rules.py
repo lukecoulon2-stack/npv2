@@ -79,17 +79,19 @@ def timezone_value(value):
         raise InputError("Indiquez un fuseau horaire IANA, par exemple Europe/Paris.") from None
 
 
-def settings_row(connection, *, required=False):
-    row = connection.execute("SELECT * FROM settings WHERE id = 1").fetchone()
+def settings_row(connection, workspace, *, required=False):
+    row = connection.execute("SELECT * FROM settings WHERE workspace_id = ?", (workspace,)).fetchone()
     if required and row is None:
         raise InputError("Configurez d’abord les deux parents dans Mon planning.", 409)
     return row
 
 
-def timezone_for(connection, settings):
+def timezone_for(connection, workspace, settings):
     if settings is not None:
         return ZoneInfo(settings["timezone"])
-    previous = connection.execute("SELECT value FROM app_preferences WHERE key = 'timezone'").fetchone()
+    previous = connection.execute(
+        "SELECT value FROM app_preferences WHERE workspace_id = ? AND key = 'timezone'", (workspace,),
+    ).fetchone()
     return ZoneInfo(previous["value"] if previous else DEFAULT_ZONE)
 
 
@@ -104,22 +106,24 @@ def settings_fields(data):
 
 
 class CustodyCalendar:
-    def __init__(self, connection, first, last):
-        settings = settings_row(connection, required=True)
+    def __init__(self, connection, workspace, first, last):
+        settings = settings_row(connection, workspace, required=True)
+        self.workspace = workspace
         self.anchor = date.fromisoformat(settings["anchor"])
         self.first_parent = settings["first_parent"]
         self.names = [settings["name_a"], settings["name_b"]]
         self.weekend_years = {
             row["year"]
             for row in connection.execute(
-                "SELECT year FROM weekend_switches WHERE year BETWEEN ? AND ?", (first.year, last.year)
+                "SELECT year FROM weekend_switches WHERE workspace_id = ? AND year BETWEEN ? AND ?",
+                (workspace, first.year, last.year),
             )
         }
         self.overrides = {
             row["day"]: row["parent"]
             for row in connection.execute(
-                "SELECT day, parent FROM day_overrides WHERE day BETWEEN ? AND ?",
-                (first.isoformat(), last.isoformat()),
+                "SELECT day, parent FROM day_overrides WHERE workspace_id = ? AND day BETWEEN ? AND ?",
+                (workspace, first.isoformat(), last.isoformat()),
             )
         }
 
@@ -165,7 +169,7 @@ class Period:
 
     def preview(self, calendar):
         digest = hashlib.sha256(json.dumps([
-            self.first.isoformat(), self.last.isoformat(), self.action, self.target, calendar.names,
+            calendar.workspace, self.first.isoformat(), self.last.isoformat(), self.action, self.target, calendar.names,
         ]).encode())
         counts = {1: 0, 2: 0}
         sample = []
@@ -179,14 +183,14 @@ class Period:
     def apply(self, connection, calendar):
         if self.action == "clear":
             connection.execute(
-                "DELETE FROM day_overrides WHERE day BETWEEN ? AND ?",
-                (self.first.isoformat(), self.last.isoformat()),
+                "DELETE FROM day_overrides WHERE workspace_id = ? AND day BETWEEN ? AND ?",
+                (calendar.workspace, self.first.isoformat(), self.last.isoformat()),
             )
         else:
             connection.executemany(
-                """INSERT INTO day_overrides(day, parent) VALUES (?, ?)
-                   ON CONFLICT(day) DO UPDATE SET parent = excluded.parent""",
-                ((day, after) for day, _, after in self.changes(calendar)),
+                """INSERT INTO day_overrides(workspace_id, day, parent) VALUES (?, ?, ?)
+                   ON CONFLICT(workspace_id, day) DO UPDATE SET parent = excluded.parent""",
+                ((calendar.workspace, day, after) for day, _, after in self.changes(calendar)),
             )
 
 
@@ -224,15 +228,16 @@ def event_fields(data, zone):
     )
 
 
-def refresh_reminder_times(connection, zone):
+def refresh_reminder_times(connection, workspace, zone):
     rows = connection.execute(
-        "SELECT id, day, start_time, reminder_minutes FROM events WHERE reminder_minutes IS NOT NULL"
+        """SELECT id, day, start_time, reminder_minutes FROM events
+           WHERE workspace_id = ? AND reminder_minutes IS NOT NULL""", (workspace,),
     ).fetchall()
     connection.executemany(
-        "UPDATE events SET remind_at = ? WHERE id = ?",
+        "UPDATE events SET remind_at = ? WHERE id = ? AND workspace_id = ?",
         (
             (reminder_timestamp(date.fromisoformat(row["day"]), row["start_time"], row["reminder_minutes"], zone),
-             row["id"])
+             row["id"], workspace)
             for row in rows
         ),
     )

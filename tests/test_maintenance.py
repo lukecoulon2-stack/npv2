@@ -7,13 +7,22 @@ from unittest.mock import patch
 
 from planning.database import initialize
 from planning.updates import REQUIRED, apply_pending, fetch_release, pending_revision
+from planning.visits import DEVICE_COOKIE
 from planning.web import create_app
 
 
 HEADERS = {"X-Tempo-Request": "1"}
+PASSWORD = "un-mot-de-passe-de-test"
 
 
 class MaintenanceTests(unittest.TestCase):
+    def register(self, client, username="maintenance", *, share=True):
+        self.assertEqual(client.post("/api/account/register", json={
+            "username": username, "password": PASSWORD,
+        }, headers=HEADERS).status_code, 204)
+        if share:
+            self.assertEqual(client.post("/api/account/share", headers=HEADERS).status_code, 204)
+
     def test_visits_and_locked_data(self):
         with TemporaryDirectory() as workspace, patch.dict(os.environ, {"NAONING_MAINTENANCE_CODE": "test-pass"}):
             database = Path(workspace) / "planning.sqlite3"
@@ -23,6 +32,7 @@ class MaintenanceTests(unittest.TestCase):
             self.assertIn(b'data-welcome="yes"', first.get("/").data)
             self.assertIn(b'data-welcome="no"', first.get("/notes").data)
             self.assertEqual(first.get("/api/maintenance/data").status_code, 401)
+            self.register(first)
             self.assertEqual(first.post("/api/maintenance/unlock", json={"code": "no"}, headers=HEADERS).status_code, 403)
             self.assertEqual(first.post("/api/maintenance/unlock", json={"code": "test-pass"}, headers=HEADERS).status_code, 200)
             self.assertEqual(first.get("/api/maintenance/data").json["notes"], [])
@@ -30,9 +40,15 @@ class MaintenanceTests(unittest.TestCase):
             other_ip = {"REMOTE_ADDR": "192.0.2.2"}
             self.assertIn(b'data-welcome="yes"', first.get("/", environ_overrides=other_ip).data)
             self.assertEqual(first.get("/api/maintenance", environ_overrides=other_ip).status_code, 401)
-            logs = first.get("/api/maintenance").json["logs"]
-            self.assertEqual([item["visitor_id"] for item in logs], [3, 2, 1, 1])
+            overview = first.get("/api/maintenance").json
+            logs = overview["logs"]
+            self.assertEqual([item["visitor_id"] for item in logs], [4, 3, 2, 1, 1])
+            self.assertEqual([item["username"] for item in logs], ["maintenance", None, "maintenance", None, None])
             self.assertEqual(logs[0]["ip"], "192.0.2.2")
+            self.assertEqual(overview["accounts"], [{"id": 1, "username": "maintenance", "visitor_count": 2}])
+            visitors = first.get("/api/maintenance/accounts/1").json["visitors"]
+            self.assertEqual([item["id"] for item in visitors], [4, 2])
+            self.assertEqual(visitors[0]["last_connected_at"], logs[0]["connected_at"])
             self.assertEqual(first.post("/api/maintenance/update", headers=HEADERS).status_code, 409)
             first.post("/api/maintenance/lock", headers=HEADERS)
             self.assertEqual(first.get("/api/maintenance").status_code, 401)
@@ -42,21 +58,63 @@ class MaintenanceTests(unittest.TestCase):
             database = Path(workspace) / "planning.sqlite3"
             initialize(database)
             app = create_app(database, "bench")
-            admin, visitor = app.test_client(), app.test_client()
+            admin, visitor, second_browser = (app.test_client() for _ in range(3))
             admin.get("/")
-            visitor.get("/")
-            visitor.get("/notes")
-            path = "/api/maintenance/visitors/2"
+            self.register(admin)
+            visitor.set_cookie(DEVICE_COOKIE, admin.get_cookie(DEVICE_COOKIE).value)
+            self.register(visitor, "alexandra")
+            second_browser.post("/api/account/login", json={"username": "alexandra", "password": PASSWORD}, headers=HEADERS)
+            path = "/api/maintenance/accounts/2/visitors/3"
             self.assertEqual(visitor.delete(path, headers=HEADERS).status_code, 401)
             admin.post("/api/maintenance/unlock", json={"code": "test-pass"}, headers=HEADERS)
+            self.assertEqual(admin.delete("/api/maintenance/accounts/2/visitors/2", headers=HEADERS).status_code, 404)
             self.assertEqual(admin.delete(path).status_code, 403)
             self.assertEqual(admin.delete(path, headers=HEADERS).status_code, 204)
             self.assertEqual(admin.delete(path, headers=HEADERS).status_code, 404)
             info = admin.get("/api/maintenance").json
-            self.assertEqual([row["id"] for row in info["visitors"]], [1])
-            self.assertEqual([row["visitor_id"] for row in info["logs"]], [1])
+            self.assertEqual([row["visitor_count"] for row in info["accounts"]], [1, 1])
+            self.assertEqual([row["visitor_id"] for row in info["logs"]], [4, 2, 1])
+            self.assertEqual(visitor.get("/api/session").status_code, 200)
             self.assertIn(b'data-welcome="yes"', visitor.get("/").data)
-            self.assertEqual([row["id"] for row in admin.get("/api/maintenance").json["visitors"]], [3, 1])
+            linked = admin.get("/api/maintenance/accounts/2").json["visitors"]
+            self.assertEqual([row["id"] for row in linked], [5, 4])
+
+    def test_delete_account_revokes_logins_and_preserves_its_shared_session(self):
+        with TemporaryDirectory() as workspace, patch.dict(os.environ, {"NAONING_MAINTENANCE_CODE": "test-pass"}):
+            database = Path(workspace) / "planning.sqlite3"
+            initialize(database)
+            app = create_app(database, "bench")
+            admin, owner, second_browser, guest, newcomer = (app.test_client() for _ in range(5))
+            self.register(admin)
+            self.register(owner, "titulaire")
+            self.register(guest, "invite", share=False)
+            credentials = {"username": "titulaire", "password": PASSWORD}
+            self.assertEqual(second_browser.post("/api/account/login", json=credentials, headers=HEADERS).status_code, 204)
+            code = owner.get("/api/session").json["account"]["code"]
+            self.assertEqual(guest.post("/api/account/join", json={"code": code}, headers=HEADERS).status_code, 204)
+            note = {"title": "Mémo partagé", "content": "Texte", "color": "#123456"}
+            self.assertEqual(owner.post("/api/notes", json=note, headers=HEADERS).status_code, 201)
+            path = "/api/maintenance/accounts/2"
+            self.assertEqual(admin.delete(path, headers=HEADERS).status_code, 401)
+            admin.post("/api/maintenance/unlock", json={"code": "test-pass"}, headers=HEADERS)
+            self.assertEqual(len(admin.get(path).json["visitors"]), 2)
+            self.assertEqual(admin.delete(path, headers=HEADERS).status_code, 204)
+            self.assertEqual(admin.get(path).status_code, 404)
+            self.assertEqual(admin.delete(path, headers=HEADERS).status_code, 404)
+            self.assertEqual(owner.get("/api/session").status_code, 401)
+            self.assertEqual(second_browser.get("/api/session").status_code, 401)
+            self.assertEqual(owner.post("/api/account/login", json=credentials, headers=HEADERS).status_code, 401)
+            self.assertNotIn(2, [entry["account_id"] for entry in admin.get("/api/maintenance").json["logs"]])
+            self.assertEqual(guest.get("/api/notes").json[0]["title"], "Mémo partagé")
+            self.assertIsNone(guest.get("/api/session").json["account"]["owner"])
+            self.register(newcomer, "titulaire", share=False)
+            self.assertEqual(newcomer.post("/api/account/join", json={"code": code}, headers=HEADERS).status_code, 204)
+            self.assertEqual(newcomer.get("/api/notes").json[0]["title"], "Mémo partagé")
+            self.assertEqual(admin.get("/api/maintenance/accounts/4").json["username"], "titulaire")
+
+            self.assertTrue(admin.get("/api/maintenance/accounts/1").json["is_current"])
+            self.assertEqual(admin.delete("/api/maintenance/accounts/1", headers=HEADERS).status_code, 204)
+            self.assertEqual(admin.get("/api/session").status_code, 401)
 
     def test_data_resets_are_separate_and_keep_event_timezone(self):
         with TemporaryDirectory() as workspace, patch.dict(os.environ, {"NAONING_MAINTENANCE_CODE": "test-pass"}):
@@ -67,6 +125,7 @@ class MaintenanceTests(unittest.TestCase):
             path = "/api/maintenance/data"
             self.assertEqual(client.delete(path + "/planning", headers=HEADERS).status_code, 401)
             client.get("/")
+            self.register(client)
             client.post("/api/maintenance/unlock", json={"code": "test-pass"}, headers=HEADERS)
             settings = {
                 "name_a": "A", "name_b": "B", "color_a": "#123456", "color_b": "#456789",

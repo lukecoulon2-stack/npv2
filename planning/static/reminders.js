@@ -35,15 +35,15 @@ export function notificationStatus() {
         return { label: "Notifications système disponibles avec HTTPS. Les rappels s’affichent ici.", canEnable: false };
     }
     if (!("Notification" in window) || !("serviceWorker" in navigator) || registerFailed) {
-        return { label: "Les rappels s’affichent dans Naoning sur ce navigateur.", canEnable: false };
+        return { label: "Les rappels s’affichent ici sur ce navigateur.", canEnable: false };
     }
     if (Notification.permission === "granted") {
-        return { label: "Notifications autorisées pendant que Naoning est ouvert.", canEnable: false };
+        return { label: "Notifications autorisées pendant que le site est ouvert.", canEnable: false };
     }
     if (Notification.permission === "denied") {
-        return { label: "Notifications bloquées par le navigateur. Les rappels s’affichent dans Naoning.", canEnable: false };
+        return { label: "Notifications bloquées par le navigateur. Les rappels s’affichent ici.", canEnable: false };
     }
-    return { label: "Les rappels s’affichent dans Naoning. Vous pouvez aussi activer les notifications système.", canEnable: true };
+    return { label: "Les rappels s’affichent ici. Vous pouvez aussi activer les notifications système.", canEnable: true };
 }
 
 export async function enableNotifications() {
@@ -55,7 +55,7 @@ async function showReminder(item, openEvent) {
     const when = item.start_time ? `${date} · ${item.start_time}` : date;
     if (registration?.active && window.Notification?.permission === "granted") {
         try {
-            await registration.showNotification("Rappel Naoning", {
+            await registration.showNotification(`Rappel ${document.body.dataset.siteName}`, {
                 body: `${item.title} · ${when}`,
                 icon: "/static/tempo-192.png",
                 tag: `tempo-${item.id}-${item.remind_at}`,

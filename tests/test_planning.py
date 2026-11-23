@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
+from planning.accounts import LOGIN_COOKIE
 from planning.config import PROJECT, read_config
 from planning.database import APPLICATION_ID, MIGRATIONS, backup, initialize, restore, transaction
 from planning.web import create_app
@@ -29,6 +30,10 @@ class ApplicationTests(unittest.TestCase):
         initialize(self.path)
         self.app = create_app(self.path, "bench")
         self.client = self.app.test_client()
+        self.assertEqual(self.write("POST", "/account/register", {
+            "username": "parents", "password": "un-mot-de-passe-de-test",
+        }).status_code, 204)
+        self.assertEqual(self.write("POST", "/account/share").status_code, 204)
         self.assertEqual(self.write("POST", "/settings", PARENTS).status_code, 204)
 
     def write(self, method, route, data=None):
@@ -111,8 +116,11 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(self.read(f"/events/{identifier}")["remind_at"], montreal)
         self.assertEqual(self.write("PUT", f"/events/{identifier}", {**event, "end_time": "09:59"}).status_code, 400)
 
+        token = self.client.get_cookie(LOGIN_COOKIE).value
+
         def fetch(client_id):
             with self.app.test_client() as http:
+                http.set_cookie(LOGIN_COOKIE, token)
                 return http.post("/api/reminders", json={"client": client_id}, headers=WRITE_HEADERS).json
 
         with patch("planning.web.time.time", return_value=montreal + 10):

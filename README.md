@@ -1,8 +1,12 @@
-# Naoning — Planning familial
+# Planneli — Planning familial
 
-Naoning réunit l’alternance parentale, les rendez-vous et le bloc-notes de la famille. Le site fonctionne sans compte et la base SQLite reste sur l’ordinateur qui héberge l’application.
+Planneli réunit l’alternance parentale, les rendez-vous et le bloc-notes de la famille. Chaque compte dispose de son espace personnel dans la base SQLite de l’ordinateur qui héberge l’application.
 
-## Lancer Naoning
+## Consignes pour les assistants IA
+
+Avant de terminer une intervention, les assistants IA doivent inscrire dans la liste `files` de [new.json](new.json) le chemin relatif de chaque fichier créé ou modifié, y compris la documentation, les tests et le manifeste lui-même. Chaque chemin doit apparaître une seule fois. Conservez les entrées qui correspondent aux changements en attente de publication.
+
+## Lancer Planneli
 
 Avec Python 3.10 ou une version plus récente, lancer depuis le dossier du projet.
 
@@ -12,30 +16,54 @@ python3 start.py
 
 Le premier lancement crée l’environnement virtuel du projet, installe les dépendances avec pip et initialise la base. Une connexion Internet est nécessaire pour télécharger les dépendances au premier lancement. Sur les distributions Linux qui séparent `venv` du paquet Python, installer également le paquet système correspondant.
 
-Le terminal affiche l’adresse du site, à ouvrir dans le navigateur. Sur l’accueil, choisir **Configurer le planning** pour saisir les deux parents et la semaine de départ. Naoning prend le lundi de cette semaine comme référence. Les événements et le bloc-notes sont accessibles dès le premier lancement. Arrêter le serveur avec **Ctrl+C**.
+Le terminal affiche l’adresse du site, à ouvrir dans le navigateur. Créez un compte avec un nom d’utilisateur et un mot de passe d’au moins huit caractères. Le navigateur conserve la connexion pendant 30 jours via un cookie. Pour accéder au site, créez une session ou rejoignez-en une. Sur l’accueil, choisissez **Configurer le planning** pour saisir les deux parents et la semaine de départ. Planneli prend le lundi de cette semaine comme référence. Arrêtez le serveur avec **Ctrl+C**.
+
+### Partager un espace
+
+Choisissez **Créer une session** pour obtenir un code de connexion à huit caractères, également visible dans **Réglages → Compte → Session**. Une autre personne peut le saisir dans **Rejoindre une session** depuis son propre compte, sur la même instance de Planneli. Les invités peuvent consulter et modifier le planning, les événements, les notes et les tâches de l’hôte. La session et son code restent actifs. **Quitter la session** ramène un invité à l’écran de choix. Les cours et matières sont communs aux comptes qui ont accès au site.
+
+Dans **Réglages → Compte → Apparence**, **Nom affiché du site** personnalise l’en-tête et le titre de l’onglet pour votre compte. Videz ce champ pour rétablir Planneli. La section **Planning** regroupe les parents et l’alternance, les week-ends et les personnes de garde.
+
+Après une mise à jour depuis une version sans comptes, les anciennes données personnelles sont conservées dans la base. Pour les rattacher, créez un compte puis exécutez cette commande sur l’ordinateur qui héberge Planneli avant de créer sa session.
+
+```bash
+python3 start.py --claim-existing NOM_UTILISATEUR
+```
+
+Si le serveur utilise un fichier de configuration personnalisé, passez la même option `--config` à cette commande. Les cours existants sont disponibles après avoir créé ou rejoint une session.
+
+### Journal dans le terminal
+
+Le terminal affiche une ligne par chargement de page, connexion ou action enregistrée. La ligne commence par l’ID du compte, puis l’heure de Paris et l’action. Un tiret représente une visite avant connexion.
+
+```text
+42 14:32:08 Chargement de page · Notes
+42 14:32:15 Création · note
+42 14:32:22 Modification · note #7
+```
 
 ### Modifier le lancement
 
-Modifier [planning_config_starter.json](planning_config_starter.json), puis redémarrer Naoning. Le fichier est lu à côté de `start.py`. Une autre configuration peut être utilisée avec `python3 start.py --config /chemin/config.json`.
+Modifier [planning_config_starter.json](planning_config_starter.json), puis redémarrer Planneli. Le fichier est lu à côté de `start.py`. Une autre configuration peut être utilisée avec `python3 start.py --config /chemin/config.json`.
 
 | Réglage | Valeur d’exemple | Effet |
 | --- | --- | --- |
 | `mode` | `"normal"` | `"bench"` utilise une base vide et temporaire. Elle accepte les écritures pendant la session et est supprimée à l’arrêt normal. |
 | `host` | `"127.0.0.1"` | Passer à `"0.0.0.0"` pour accéder au site depuis le même réseau Wi-Fi. |
-| `port` | `8000` | Port web de Naoning. |
+| `port` | `8000` | Port web de Planneli. |
 | `data_dir` | `null` | Dossier utilisateur par défaut. Pour changer l’emplacement en mode normal, indiquer un chemin absolu hors du projet. |
 
 Sous Linux, la base se trouve dans `${XDG_DATA_HOME:-$HOME/.local/share}/planning-familial/`. Sous macOS, elle se trouve dans `~/Library/Application Support/planning-familial/`. Sous Windows, elle se trouve dans `%LOCALAPPDATA%\planning-familial\`. La base s’appelle `planning.sqlite3`.
 
 ### Accéder depuis le téléphone
 
-Régler `host` à `"0.0.0.0"`, relancer Naoning et ouvrir sur le téléphone l’adresse indiquée après **Sur le même Wi-Fi**. Les deux appareils doivent être sur le même réseau. Garder Naoning sur un réseau de confiance. Tout appareil qui peut joindre le site peut modifier les données.
+Régler `host` à `"0.0.0.0"`, relancer Planneli et ouvrir sur le téléphone l’adresse indiquée après **Sur le même Wi-Fi**. Les deux appareils doivent être sur le même réseau. Utiliser une adresse HTTPS pour chiffrer le mot de passe et le cookie de connexion sur le réseau.
 
 ### Rappels et HTTPS
 
-Avec Naoning ouvert, un rappel arrive dans le navigateur qui consulte l’application. En cas de refus ou lorsque les notifications système sont indisponibles, Naoning affiche le rappel dans sa propre interface. Un événement sans horaire prend 9 h comme heure de départ dans le fuseau choisi. Le rappel est signalé une fois par navigateur et par échéance. À la reprise d’une page suspendue ou déconnectée, Naoning récupère les rappels échus depuis moins d’une heure.
+Avec Planneli ouvert, un rappel arrive dans le navigateur qui consulte l’application. En cas de refus ou lorsque les notifications système sont indisponibles, Planneli affiche le rappel dans sa propre interface. Un événement sans horaire prend 9 h comme heure de départ dans le fuseau choisi. Le rappel est signalé une fois par navigateur et par échéance. À la reprise d’une page suspendue ou déconnectée, Planneli récupère les rappels échus depuis moins d’une heure.
 
-Sur le Wi-Fi, ouvrir Naoning via une adresse HTTPS et un certificat approuvé par le téléphone pour utiliser les notifications système. Par exemple, avec Caddy sur la même machine, garder `host` à `"127.0.0.1"` dans le JSON. Dans un fichier Caddyfile local, remplacer l’IP par celle de l’ordinateur et adapter le port en amont au JSON.
+Sur le Wi-Fi, ouvrir Planneli via une adresse HTTPS et un certificat approuvé par le téléphone pour utiliser les notifications système. Par exemple, avec Caddy sur la même machine, garder `host` à `"127.0.0.1"` dans le JSON. Dans un fichier Caddyfile local, remplacer l’IP par celle de l’ordinateur et adapter le port en amont au JSON.
 
 ```caddyfile
 {
@@ -48,29 +76,33 @@ https://192.168.1.42:8443 {
 }
 ```
 
-Démarrer Caddy avec `caddy run --config /chemin/Caddyfile`. Installer et approuver l’autorité locale de Caddy sur les appareils de la famille avant d’ouvrir l’adresse HTTPS. Sur les versions iOS qui prennent en charge cette fonction, ajouter Naoning à l’écran d’accueil et demander les notifications depuis l’application. [HTTPS local de Caddy](https://caddyserver.com/docs/automatic-https#local-https) · [Notifications sur mobile](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API) · [Application web sur iOS et iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
+Démarrer Caddy avec `caddy run --config /chemin/Caddyfile`. Installer et approuver l’autorité locale de Caddy sur les appareils de la famille avant d’ouvrir l’adresse HTTPS. Sur les versions iOS qui prennent en charge cette fonction, ajouter Planneli à l’écran d’accueil et demander les notifications depuis l’application. [HTTPS local de Caddy](https://caddyserver.com/docs/automatic-https#local-https) · [Notifications sur mobile](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API) · [Application web sur iOS et iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
 
-La livraison couvre les rappels avec Naoning ouvert. Les rappels après fermeture nécessitent Web Push, une origine HTTPS approuvée et des essais sur les appareils visés. Les essais sur Safari iOS et Chrome Android physiques restent à faire.
+La livraison couvre les rappels avec Planneli ouvert. Les rappels après fermeture nécessitent Web Push, une origine HTTPS approuvée et des essais sur les appareils visés. Les essais sur Safari iOS et Chrome Android physiques restent à faire.
 
 ### À faire et Cours
 
 Dans **À faire**, chaque tâche peut avoir des détails et une échéance. Cochez-la pour la terminer et joindre, si besoin, jusqu’à quatre photos JPEG, PNG ou WebP de 3 Mio chacune. Les photos sont conservées dans la base SQLite et incluses dans les sauvegardes.
 
-Dans **Cours**, créez une matière puis ajoutez un cours. Vous pouvez saisir son contenu Markdown ou importer un fichier `.md` encodé en UTF-8. Chaque cours peut être lu dans Naoning, modifié, déplacé vers une autre matière ou téléchargé au format `.md`.
+Les **Cours** sont regroupés par niveau. Les filtres de matière, de thème et de difficulté peuvent être combinés. Les cours dont le niveau est inconnu apparaissent à la fin de la liste.
 
-Dans une tâche, le menu **Cours à réviser** crée un raccourci vers le cours choisi. La loupe en haut à droite recherche dans les notes, événements, tâches et cours. Les éléments supprimés depuis ces rubriques peuvent être restaurés ou effacés définitivement dans **Réglages → Corbeille**.
+Dans **Cours → Ajouter un cours**, copiez le prompt, ajoutez le sujet souhaité et transmettez-le à votre IA. Importez le fichier `.md` obtenu en UTF-8. Planneli lit le bloc « Info sur le cours » pour préremplir la fiche, puis retire ce bloc du Markdown publié. Vérifiez les informations détectées, renseignez les champs manquants, puis cliquez sur **Publier le cours**. La matière est créée si besoin. Vous pouvez ensuite lire le cours dans Planneli, le modifier ou télécharger son fichier Markdown.
+
+Le dossier `cours/` à côté de la base contient un fichier `<id>.md` par cours et un `index.json` qui associe chaque identifiant à son nom, sa matière, son thème, son niveau, sa date d’ajout et sa difficulté. Planneli synchronise ces fichiers à partir de SQLite, y compris lors d’une restauration. Pour les cours existants, la migration utilise la dernière date d’enregistrement et conserve les champs inconnus à renseigner lors d’une modification.
+
+Dans une tâche, le menu **Cours à réviser** crée un raccourci vers le cours choisi. La loupe en haut à droite recherche dans les notes, événements, tâches et cours. Les éléments supprimés depuis ces rubriques peuvent être restaurés ou effacés définitivement dans **Réglages → Données → Corbeille**.
 
 ### Mini-jeux
 
-Ouvrez **Mini-jeux** depuis l’accueil. **Orbitale** propose des pièces de différentes tailles et des lignes à compléter, **Fusion 243** combine des tuiles sur une grille de 5 × 5 et **Paires flash** fait retrouver six paires. Les jeux se jouent dans Naoning, avec des commandes tactiles ou au clavier.
+Ouvrez **Mini-jeux** depuis l’accueil. **Orbitale** propose des pièces de différentes tailles et des lignes à compléter, **Fusion 243** combine des tuiles sur une grille de 5 × 5 et **Paires flash** fait retrouver six paires. Les jeux se jouent dans Planneli, avec des commandes tactiles ou au clavier.
 
 ### Maintenance
 
-Ouvrir **Réglages** en haut à droite, puis **Maintenance** en bas de la page. Le code est vérifié sur le serveur. Pour choisir un autre code, définir la variable d’environnement `NAONING_MAINTENANCE_CODE` avant de lancer Naoning. Le menu se verrouille au bout de 15 minutes.
+Ouvrir **Réglages → Données → Maintenance**. Planneli génère un code de maintenance affiché dans le terminal au démarrage. Pour utiliser un code fixe, définir la variable d’environnement `NAONING_MAINTENANCE_CODE` avant de lancer Planneli. Le menu se verrouille au bout de 15 minutes.
 
-Le journal enregistre chaque ouverture ou rechargement d’une page, avec l’IP reçue par le serveur, l’heure et un identifiant numérique associé au couple IP et navigateur. Le navigateur est reconnu grâce à un cookie. Un changement d’IP, de navigateur ou la suppression du cookie crée un nouvel identifiant. La maintenance affiche les 100 dernières connexions et les données du planning, des événements et des notes au format JSON.
+Le journal enregistre les connexions et les ouvertures ou rechargements de page. Chaque identifiant de visite authentifiée correspond à un compte, un navigateur reconnu par cookie et une adresse IP. Les visites antérieures à ce rattachement restent visibles dans le journal. La maintenance affiche les 100 dernières connexions et les données de l’espace actif au format JSON.
 
-Dans **Utilisateurs**, **Supprimer** efface l’identifiant sélectionné et tout son historique de connexion après confirmation. À la prochaine visite, le serveur attribue un nouvel identifiant au navigateur.
+Dans **Comptes**, ouvrez un compte pour voir ses identifiants de visite, leur adresse IP et leur dernière connexion. Supprimer un identifiant efface son historique et déclenche l’attribution d’un nouvel identifiant à la prochaine visite. Supprimer le compte révoque ses connexions et efface tous ses identifiants de visite. Si le compte a créé une session partagée, celle-ci reste accessible avec son code.
 
 Dans **Gestion des données**, trois actions distinctes permettent de réinitialiser le planning, de vider le bloc-notes ou d’effacer les événements. Chaque action demande une confirmation. Après réinitialisation du planning, configurer à nouveau les parents et l’alternance. Le fuseau horaire et les rappels des événements sont conservés par cette action.
 
@@ -84,7 +116,7 @@ En mode normal, choisir un fichier de destination qui n’existe pas dans un dos
 python3 start.py --backup /chemin/tempo-sauvegarde.sqlite3
 ```
 
-Pour revenir à une sauvegarde, arrêter Naoning, puis lancer la commande de restauration. Naoning conserve une copie datée de la base précédente. Relancer ensuite normalement.
+Pour revenir à une sauvegarde, arrêter Planneli, puis lancer la commande de restauration. Planneli conserve une copie datée de la base précédente. Relancer ensuite normalement.
 
 ```bash
 python3 start.py --restore /chemin/tempo-sauvegarde.sqlite3

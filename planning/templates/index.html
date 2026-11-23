@@ -5,14 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#151020">
     <meta name="description" content="Planning de garde, rendez-vous et notes de la famille.">
-    <title>Naoning · Planning familial</title>
+    <title>{{ site_name }} · {{ 'Planning familial' if active else 'Choix de session' if account else 'Connexion' }}</title>
     <link rel="icon" href="{{ url_for('static', filename='tempo.png') }}" type="image/png">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='tempo-192.png') }}">
     <link rel="manifest" href="{{ url_for('static', filename='tempo.webmanifest') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='app.js' if active else 'accounts.js') }}"></script>
 </head>
-<body data-mode="{{ mode }}" data-welcome="{{ 'yes' if welcome else 'no' }}">
+<body data-mode="{{ mode }}" data-welcome="{{ 'yes' if welcome else 'no' }}"
+      data-site-name="{{ site_name }}" data-default-site-name="{{ default_site_name }}"{% if account %} data-account="{{ account }}"{% endif %}>
     <svg xmlns="http://www.w3.org/2000/svg" class="symbols" aria-hidden="true">
         <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></symbol>
         <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21v-6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6"/></symbol>
@@ -39,21 +40,24 @@
     <a class="skip-link" href="#main">Aller au contenu</a>
     <header class="app-header">
         <div class="header-inner">
-            <a href="/" class="wordmark" data-route="/" aria-label="Naoning, accueil">
+            <a href="/" class="wordmark" data-route="/" aria-label="{{ site_name }}, accueil">
                 <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg></span>
-                <span>Naoning</span>
+                <span class="wordmark-name">{{ site_name }}</span>
             </a>
             <div class="header-actions">
                 {% if mode == "bench" %}<span class="bench-indicator" title="Base temporaire pour ce lancement"><span class="bench-prefix">Mode </span>bench</span>{% endif %}
+                {% if active %}
                 <button type="button" class="icon-button" data-search aria-label="Rechercher"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
                 <a href="/reglages" class="settings-link" data-route="/reglages" aria-label="Réglages">
                     <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
                     <span>Réglages</span>
                 </a>
+                {% endif %}
             </div>
         </div>
     </header>
     <main id="main" class="app-main" tabindex="-1">
+        {% if active %}
         <div id="page">
             <section class="home-hero">
                 <div class="hero-art" aria-hidden="true"></div>
@@ -100,9 +104,50 @@
                 <div id="home-setup"></div>
             </section>
         </div>
-        <noscript><p class="empty">Activez JavaScript pour utiliser Naoning.</p></noscript>
+        {% elif account %}
+        <section class="auth-panel section-panel panel stack-lg" aria-labelledby="session-title" data-session-choice>
+            <div class="page-title tone-planning">
+                <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg></span>
+                <h1 id="session-title">Choisir une session</h1>
+            </div>
+            <p>Créez votre session ou saisissez le code d’une session existante pour accéder à {{ site_name }}.</p>
+            <div class="flow">
+                <button class="button primary" type="button" data-share>Créer une session</button>
+                <button class="button secondary" type="button" data-join>Rejoindre une session</button>
+            </div>
+            <p class="muted small">Une session créée reste active.</p>
+            <p class="error" data-error role="alert" hidden></p>
+            <div><button class="button secondary" type="button" data-logout>Se déconnecter</button></div>
+        </section>
+        {% else %}
+        <section class="auth-panel section-panel panel stack-lg" aria-labelledby="auth-title">
+            <div class="page-title tone-planning">
+                <span class="space-icon"><svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg></span>
+                <h1 id="auth-title">Se connecter</h1>
+            </div>
+            <form class="stack" method="post" data-account-form>
+                <div class="field">
+                    <label for="auth-username">Nom d’utilisateur</label>
+                    <input id="auth-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="40" required>
+                </div>
+                <div class="field">
+                    <label for="auth-password">Mot de passe</label>
+                    <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required>
+                    <p class="muted small" data-password-hint hidden>8 caractères minimum.</p>
+                </div>
+                <p class="error" data-error role="alert" hidden></p>
+                <button class="button primary" type="submit">Se connecter</button>
+            </form>
+            <div class="auth-switch flow">
+                <span class="muted small" data-account-prompt>Première visite ?</span>
+                <button class="button secondary" type="button" data-switch-account>Créer un compte</button>
+            </div>
+        </section>
+        {% endif %}
+        <noscript><p class="empty">Activez JavaScript pour utiliser {{ site_name }}.</p></noscript>
     </main>
     <footer class="app-credit">Développé et déployé par Luke Coulon</footer>
+    {% if active %}
     <nav class="tab-bar" aria-label="Navigation principale">
         <a class="tone-planning" href="/" data-route="/" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg><span>Accueil</span></a>
         <a class="tone-planning" href="/planning" data-route="/planning"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg><span>Planning</span></a>
@@ -111,6 +156,7 @@
         <a class="tone-tasks" href="/a-faire" data-route="/a-faire"><svg class="icon" aria-hidden="true"><use href="#i-task"></use></svg><span>À faire</span></a>
         <a class="tone-courses" href="/cours" data-route="/cours"><svg class="icon" aria-hidden="true"><use href="#i-book"></use></svg><span>Cours</span></a>
     </nav>
+    {% endif %}
     <dialog id="sheet" class="sheet" aria-labelledby="sheet-title"></dialog>
     <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 </body>

@@ -11,6 +11,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 CONFIG_FILE = PROJECT / "planning_config_starter.json"
 DEFAULT_ZONE = "Europe/Paris"
+SITE_NAME = "Planneli"
 
 
 def default_data_dir():

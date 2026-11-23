@@ -17,6 +17,11 @@ const resetActions = {
         done: "Événements effacés.",
     },
 };
+const connectionDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" });
+
+function connectionTime(timestamp) {
+    return `<time datetime="${escapeHtml(timestamp)}">${connectionDate.format(new Date(timestamp))}</time>`;
+}
 
 export function askMaintenanceCode() {
     const content = sheet("Maintenance", `<form class="stack">
@@ -30,24 +35,21 @@ export function askMaintenanceCode() {
     });
 }
 
-export async function openMaintenance({ visitorsOpen = false, dataOpen = false } = {}) {
+export async function openMaintenance({ accountsOpen = false, dataOpen = false } = {}) {
     const loading = sheet("Maintenance", '<p class="empty">Chargement…</p>');
     try {
         const info = await api("/maintenance");
         if (!activeSheet(loading)) return;
-        const formatter = new Intl.DateTimeFormat("fr-FR", {
-            dateStyle: "short", timeStyle: "medium",
-        });
         const rows = info.logs.map(row => `<tr>
-            <td>#${row.visitor_id}</td><td>${escapeHtml(row.ip)}</td>
-            <td><time datetime="${escapeHtml(row.connected_at)}">${formatter.format(new Date(row.connected_at))}</time></td>
+            <td>${escapeHtml(row.username ?? "—")}</td><td>#${row.visitor_id}</td><td>${escapeHtml(row.ip)}</td>
+            <td>${connectionTime(row.connected_at)}</td>
         </tr>`).join("");
-        const visitors = info.visitors.map(visitor => `<li class="visitor-row">
-            <div><strong>#${visitor.id}</strong> · ${escapeHtml(visitor.ip)}
-                <p class="muted small">Dernière visite · ${formatter.format(new Date(visitor.last_connected_at))}</p>
-            </div>
-            <button type="button" class="button danger" data-delete-visitor="${visitor.id}"
-                aria-label="Supprimer l’utilisateur nº ${visitor.id}">${icon("trash")} Supprimer</button>
+        const accounts = info.accounts.map(account => `<li>
+            <button type="button" class="record-row" data-maintenance-account="${account.id}">
+                ${icon("user")}<span class="row-copy"><strong>${escapeHtml(account.username)}</strong>
+                <span class="muted small">Compte #${account.id} · ${account.visitor_count} identifiant${account.visitor_count === 1 ? "" : "s"}</span></span>
+                ${icon("right")}
+            </button>
         </li>`).join("");
         const content = sheet("Maintenance", `<div class="stack-lg">
             <section class="info-block stack">
@@ -72,13 +74,13 @@ export async function openMaintenance({ visitorsOpen = false, dataOpen = false }
                         class="button danger" data-reset="${scope}">${action.label}</button>`).join("")}
                 </div>
             </details>
-            <details class="info-block" ${visitorsOpen ? "open" : ""}><summary>Utilisateurs (${info.visitors.length})</summary>
-                ${visitors ? `<ul class="visitor-list">${visitors}</ul>` : '<p class="muted">Aucun utilisateur enregistré.</p>'}
+            <details class="info-block" ${accountsOpen ? "open" : ""}><summary>Comptes (${info.accounts.length})</summary>
+                ${accounts ? `<ul class="visitor-list row-list">${accounts}</ul>` : '<p class="muted">Aucun compte enregistré.</p>'}
             </details>
             <section class="stack">
                 <div class="flow"><h3>Dernières connexions</h3><button type="button" class="button secondary" data-refresh>Actualiser</button></div>
                 ${rows ? `<div class="maintenance-scroll" tabindex="0"><table class="maintenance-table">
-                    <thead><tr><th scope="col">ID</th><th scope="col">IP</th><th scope="col">Date et heure</th></tr></thead>
+                    <thead><tr><th scope="col">Compte</th><th scope="col">ID de visite</th><th scope="col">IP</th><th scope="col">Date et heure</th></tr></thead>
                     <tbody>${rows}</tbody></table></div>` : '<p class="muted">Aucune connexion enregistrée.</p>'}
             </section>
             <div><button type="button" class="button secondary" data-lock>Verrouiller</button></div>
@@ -105,24 +107,8 @@ export async function openMaintenance({ visitorsOpen = false, dataOpen = false }
                 },
             });
         }
-        const showVisitors = () => openMaintenance({ visitorsOpen: true });
-        for (const button of content.querySelectorAll("[data-delete-visitor]")) {
-            const id = button.dataset.deleteVisitor;
-            button.onclick = () => confirmDelete({
-                title: `Supprimer l’utilisateur nº ${id}`,
-                message: "Son identifiant et son historique de connexion seront effacés. S’il revient, un nouvel identifiant lui sera attribué.",
-                onCancel: showVisitors,
-                onDelete: async confirmation => {
-                    try {
-                        await api(`/maintenance/visitors/${id}`, "DELETE");
-                        toast("Utilisateur supprimé.");
-                        if (activeSheet(confirmation)) await showVisitors();
-                    } catch (error) {
-                        if (error.status === 401 && activeSheet(confirmation)) askMaintenanceCode();
-                        else throw error;
-                    }
-                },
-            });
+        for (const button of content.querySelectorAll("[data-maintenance-account]")) {
+            button.onclick = () => openMaintenanceAccount(button.dataset.maintenanceAccount);
         }
         const status = content.querySelector("[data-update-status]");
         submitForm(form, async () => {
@@ -165,6 +151,69 @@ export async function openMaintenance({ visitorsOpen = false, dataOpen = false }
         if (!activeSheet(loading)) return;
         if (error.status === 401) askMaintenanceCode();
         else sheet("Maintenance", errorBlock(error));
+    }
+}
+
+async function openMaintenanceAccount(id) {
+    const path = `/maintenance/accounts/${id}`;
+    const back = () => openMaintenance({ accountsOpen: true });
+    const redraw = () => openMaintenanceAccount(id);
+    const backButton = `<button type="button" class="button secondary" data-back>${icon("left")} Retour aux comptes</button>`;
+    const loading = sheet("Compte", '<p class="empty">Chargement…</p>');
+    try {
+        const account = await api(path);
+        if (!activeSheet(loading)) return;
+        const visitors = account.visitors.map(visitor => `<li class="visitor-row info-block">
+            <div><strong>Identifiant #${visitor.id}</strong><p class="muted small">${escapeHtml(visitor.ip)}</p>
+                <p class="muted small">Dernière connexion · ${connectionTime(visitor.last_connected_at)}</p></div>
+            <button type="button" class="button danger" data-delete-visitor="${visitor.id}"
+                aria-label="Supprimer l’identifiant nº ${visitor.id}">${icon("trash")} Supprimer</button>
+        </li>`).join("");
+        const content = sheet(account.username, `<div class="stack">
+            <h3>Identifiants de visite</h3>
+            ${visitors ? `<ul class="visitor-list row-list">${visitors}</ul>` : '<p class="muted">Aucun identifiant de visite associé.</p>'}
+            <div class="flow">${backButton}
+                <button type="button" class="button danger" data-delete-account>${icon("trash")} Supprimer le compte</button>
+            </div>
+        </div>`, `Compte #${account.id}`);
+        content.querySelector("[data-back]").onclick = back;
+
+        async function remove(confirmation, endpoint, done, next) {
+            try {
+                await api(endpoint, "DELETE");
+                toast(done);
+                if (account.is_current && endpoint === path) location.replace("/");
+                else if (activeSheet(confirmation)) await next();
+            } catch (error) {
+                if (error.status === 401 && activeSheet(confirmation)) askMaintenanceCode();
+                else throw error;
+            }
+        }
+
+        for (const button of content.querySelectorAll("[data-delete-visitor]")) {
+            const visitor = button.dataset.deleteVisitor;
+            button.onclick = () => confirmDelete({
+                title: `Supprimer l’identifiant nº ${visitor}`,
+                message: "Cet identifiant et son historique seront effacés. Un nouvel identifiant sera attribué à la prochaine visite depuis ce navigateur et cette adresse IP.",
+                onCancel: redraw,
+                onDelete: confirmation => remove(confirmation, `${path}/visitors/${visitor}`, "Identifiant supprimé.", redraw),
+            });
+        }
+        content.querySelector("[data-delete-account]").onclick = () => confirmDelete({
+            title: `Supprimer le compte ${account.username}`,
+            message: "Le compte, ses identifiants et son historique seront effacés. Ses connexions seront révoquées."
+                + (account.hosts_session ? " Le code de la session créée par ce compte restera utilisable." : "")
+                + (account.is_current ? " Vous serez déconnecté." : ""),
+            onCancel: redraw,
+            onDelete: confirmation => remove(confirmation, path, "Compte supprimé.", back),
+        });
+    } catch (error) {
+        if (!activeSheet(loading)) return;
+        if (error.status === 401) askMaintenanceCode();
+        else {
+            const content = sheet("Compte", `<div class="stack">${errorBlock(error)}<div>${backButton}</div></div>`);
+            content.querySelector("[data-back]").onclick = back;
+        }
     }
 }
 

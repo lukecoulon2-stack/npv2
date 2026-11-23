@@ -267,53 +267,50 @@ function editDayNote(day, settings, note, onCancel, onDone) {
     });
 }
 
-export function renderSettings(host, session, onSetup, onUpdate) {
-    host.innerHTML = pageHeading("Réglages", "settings", "tone-planning");
+export function renderPlanningSettings(host, session, page, onUpdate) {
     if (!session.settings) {
-        host.insertAdjacentHTML("beforeend", empty(
-            "Planning à configurer",
-            "Renseignez les parents pour accéder aux réglages de garde.",
-            '<button type="button" class="button primary" data-setup>Configurer le planning</button>',
-        ));
-        host.querySelector("[data-setup]").onclick = onSetup;
+        host.innerHTML = `<p class="muted">Renseignez les parents et la semaine de référence pour configurer le planning.</p>
+            <div><button type="button" class="button primary" data-setup>Configurer le planning</button></div>`;
+        host.querySelector("[data-setup]").onclick = () => openParentSettings(session, onUpdate);
+        return;
+    }
+    if (page === "weekends") {
+        host.innerHTML = '<p class="muted" role="status">Chargement…</p>';
+        loadWeekends(host, Number(session.today.slice(0, 4)));
+        return;
+    }
+    if (page === "gardes") {
+        host.innerHTML = '<p class="muted" role="status">Chargement…</p>';
+        loadCarers(host);
         return;
     }
 
     const settings = session.settings;
     const list = parents(settings);
-    host.insertAdjacentHTML("beforeend", `<div class="stack-lg">
-        <section class="section-panel panel stack">
-            <h2>Parents et alternance</h2>
-            <div class="legend">${list.map(item => `<span class="legend-item">${colorDot(item.color)} ${escapeHtml(item.name)}</span>`).join("")}</div>
-            <p class="muted small">Semaine du ${formatDate(settings.anchor, { day: "numeric", month: "long", year: "numeric" })}
-                · ${escapeHtml(list[settings.first_parent - 1].name)} commence<br>Fuseau horaire · ${escapeHtml(settings.timezone)}</p>
-            <div><button type="button" class="button secondary" data-parents>${icon("edit")} Modifier</button></div>
-        </section>
-        <section class="section-panel panel stack" data-weekends>
-            <h2>Inversion des week-ends</h2><p class="muted">Chargement…</p>
-        </section>
-        <section class="section-panel panel stack" data-carers>
-            <h2>Personnes de garde</h2><p class="muted">Chargement…</p>
-        </section>
-    </div>`);
+    host.innerHTML = `<div class="settings-parents">
+        ${list.map(item => `<div class="settings-parent">${colorDot(item.color)}<strong>${escapeHtml(item.name)}</strong></div>`).join("")}
+    </div>
+    <dl class="settings-facts">
+        <div><dt>Semaine de référence</dt><dd><time datetime="${settings.anchor}">${formatDate(settings.anchor, { day: "numeric", month: "long", year: "numeric" })}</time></dd></div>
+        <div><dt>Premier parent</dt><dd>${escapeHtml(list[settings.first_parent - 1].name)}</dd></div>
+        <div><dt>Fuseau horaire</dt><dd>${escapeHtml(settings.timezone)}</dd></div>
+    </dl>
+    <div><button type="button" class="button primary" data-parents>${icon("edit")} Modifier les parents</button></div>`;
     host.querySelector("[data-parents]").onclick = () => openParentSettings(session, onUpdate);
-    loadWeekends(host.querySelector("[data-weekends]"), Number(session.today.slice(0, 4)));
-    loadCarers(host.querySelector("[data-carers]"));
 }
 
 async function loadWeekends(section, year) {
     try {
         const years = await api("/weekends");
         if (!section.isConnected) return;
-        section.innerHTML = `<h2>Inversion des week-ends</h2>
-            <p class="muted">Inverse l’alternance des samedis et dimanches de l’année choisie. Les attributions manuelles restent prioritaires.</p>
+        section.innerHTML = `<p class="muted">Inverse l’alternance des samedis et dimanches de l’année choisie. Les attributions manuelles restent prioritaires.</p>
             <form class="stack">
                 <div class="flow weekend-fields">
                     ${field("Année", input("year", year, 'type="number" min="1" max="9999" step="1" required'))}
                     <label class="check-line"><input name="enabled" type="checkbox"> Inverser les week-ends</label>
                 </div>
                 ${formError}
-                <div><button type="submit" class="button secondary">Enregistrer l’inversion</button></div>
+                <div><button type="submit" class="button primary">Enregistrer l’inversion</button></div>
             </form>
             <p class="muted small" data-years></p>`;
         const form = section.querySelector("form");
@@ -340,7 +337,8 @@ async function loadWeekends(section, year) {
             toast("Réglage des week-ends enregistré.");
         });
     } catch (error) {
-        section.innerHTML = `<h2>Inversion des week-ends</h2>${errorBlock(error)}`;
+        section.innerHTML = `${errorBlock(error)}<div><button type="button" class="button secondary">Réessayer</button></div>`;
+        section.querySelector("button").onclick = () => loadWeekends(section, year);
     }
 }
 
@@ -348,8 +346,7 @@ async function loadCarers(section) {
     try {
         const carers = await api("/carers");
         if (!section.isConnected) return;
-        section.innerHTML = `<h2>Personnes de garde</h2>
-            ${carers.length ? `<div class="row-list">${carers.map(carer => `<button type="button" class="record-row" data-carer="${carer.id}">
+        section.innerHTML = `${carers.length ? `<div class="row-list">${carers.map(carer => `<button type="button" class="record-row" data-carer="${carer.id}">
                 ${icon("user")}<span class="row-copy"><strong>${escapeHtml(carer.name)}</strong>
                 <span class="small muted">${carer.days.map(day => WEEKDAYS[day]).join(", ")}${carer.active ? "" : " · Suspendue"}</span></span>
                 ${icon("right")}</button>`).join("")}</div>` : '<p class="muted">Aucune garde récurrente.</p>'}
@@ -360,7 +357,8 @@ async function loadCarers(section) {
             button.onclick = () => editCarer(carers.find(carer => carer.id === Number(button.dataset.carer)), redraw);
         });
     } catch (error) {
-        section.innerHTML = `<h2>Personnes de garde</h2>${errorBlock(error)}`;
+        section.innerHTML = `${errorBlock(error)}<div><button type="button" class="button secondary">Réessayer</button></div>`;
+        section.querySelector("button").onclick = () => loadCarers(section);
     }
 }
 

@@ -1,4 +1,3 @@
-import hashlib
 import os
 import secrets
 import time
@@ -6,17 +5,17 @@ from collections import deque
 from functools import wraps
 from threading import Lock
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, make_response, request
 from itsdangerous import BadData, URLSafeTimedSerializer
 
+from .accounts import MAINTENANCE_COOKIE as ACCESS_COOKIE, account_transaction, clear_login
 from .config import PROJECT
-from .database import transaction
-from .rules import InputError, now_iso
+from .database import WORKSPACE_TABLES
+from .rules import InputError
 from .updates import REPOSITORY, fetch_release, pending_revision
+from .visits import DEVICE_COOKIE
 
 
-DEVICE_COOKIE = "naoning_device"
-ACCESS_COOKIE = "naoning_maintenance"
 ACCESS_SECONDS = 900
 RAW_TABLES = (
     "settings", "day_overrides", "weekend_switches", "carers", "carer_days",
@@ -29,33 +28,25 @@ RESET_TABLES = {
 }
 
 
-def log_connection(database):
-    if request.method != "GET" or "prefetch" in request.headers.get("Sec-Purpose", ""):
-        return None, False
-    device = request.cookies.get(DEVICE_COOKIE, "")
-    issued = None
-    if len(device) != 43 or not all(ch.isascii() and (ch.isalnum() or ch in "-_") for ch in device):
-        device = issued = secrets.token_urlsafe(32)
-    digest = hashlib.sha256(device.encode("ascii")).hexdigest()
-    ip = request.remote_addr or "inconnue"
-    with transaction(database, write=True) as connection:
-        visitor = connection.execute(
-            "SELECT id FROM visitors WHERE ip = ? AND device = ?", (ip, digest)
-        ).fetchone()
-        first = visitor is None
-        visitor_id = connection.execute(
-            "INSERT INTO visitors(ip, device) VALUES (?, ?)", (ip, digest)
-        ).lastrowid if first else visitor["id"]
-        connection.execute(
-            "INSERT INTO connections(visitor_id, connected_at) VALUES (?, ?)", (visitor_id, now_iso())
-        )
-    return issued, first
+def find_maintenance_account(connection, account_id):
+    account = connection.execute(
+        """SELECT accounts.id, username, (share_code IS NOT NULL) AS hosts_session
+           FROM accounts JOIN workspaces ON workspaces.id = own_workspace WHERE accounts.id = ?""",
+        (account_id,),
+    ).fetchone()
+    if account is None:
+        raise InputError("Compte introuvable.", 404)
+    return account
 
 
 def maintenance_routes(database, mode, json_input):
     blueprint = Blueprint("maintenance", __name__, url_prefix="/api/maintenance")
     signer = URLSafeTimedSerializer(secrets.token_urlsafe(32), salt=ACCESS_COOKIE)
-    pin = os.environ.get("NAONING_MAINTENANCE_CODE", "20072009").encode("utf-8")
+    code = os.environ.get("NAONING_MAINTENANCE_CODE")
+    if not code:
+        code = f"{secrets.randbelow(10**8):08d}"
+        print(f"Code de maintenance · {code}", flush=True)
+    pin = code.encode("utf-8")
     attempts = {}
     attempt_lock = Lock()
     update_lock = Lock()
@@ -67,7 +58,7 @@ def maintenance_routes(database, mode, json_input):
                 identity = signer.loads(request.cookies.get(ACCESS_COOKIE, ""), max_age=ACCESS_SECONDS)
             except BadData:
                 raise InputError("Saisissez le code de maintenance pour continuer.", 401) from None
-            if identity != [request.remote_addr, request.cookies.get(DEVICE_COOKIE)]:
+            if identity != [request.remote_addr, request.cookies.get(DEVICE_COOKIE), g.account["id"]]:
                 raise InputError("Saisissez le code de maintenance pour continuer.", 401)
             return handler(*args, **kwargs)
         return wrapped
@@ -92,7 +83,7 @@ def maintenance_routes(database, mode, json_input):
             attempts.pop(ip, None)
         response = jsonify({"authorized": True})
         response.set_cookie(
-            ACCESS_COOKIE, signer.dumps([ip, request.cookies.get(DEVICE_COOKIE)]),
+            ACCESS_COOKIE, signer.dumps([ip, request.cookies.get(DEVICE_COOKIE), g.account["id"]]),
             max_age=ACCESS_SECONDS, httponly=True, samesite="Strict", secure=request.is_secure,
         )
         return response
@@ -106,36 +97,75 @@ def maintenance_routes(database, mode, json_input):
     @blueprint.get("")
     @authorized
     def overview():
-        with transaction(database) as connection:
+        with account_transaction(database) as connection:
             logs = connection.execute(
-                """SELECT connections.id, visitor_id, ip, connected_at
+                """SELECT connections.id, visitor_id, visitors.account_id, accounts.username, ip, connected_at
                    FROM connections JOIN visitors ON visitors.id = visitor_id
+                   LEFT JOIN accounts ON accounts.id = visitors.account_id
                    ORDER BY connections.id DESC LIMIT 100"""
             ).fetchall()
-            visitors = connection.execute(
-                """SELECT visitors.id, visitors.ip, latest.connected_at AS last_connected_at
-                   FROM visitors JOIN connections AS latest ON latest.id = (
-                       SELECT id FROM connections WHERE visitor_id = visitors.id ORDER BY id DESC LIMIT 1
-                   ) ORDER BY latest.id DESC"""
+            accounts = connection.execute(
+                """SELECT accounts.id, username, COUNT(visitors.id) AS visitor_count
+                   FROM accounts LEFT JOIN visitors ON visitors.account_id = accounts.id
+                   GROUP BY accounts.id ORDER BY username_key"""
             ).fetchall()
         return {
             "logs": [dict(row) for row in logs],
-            "visitors": [dict(row) for row in visitors],
+            "accounts": [dict(row) for row in accounts],
             "repository": REPOSITORY,
             "pending": pending_revision(PROJECT),
             "can_update": mode == "normal",
         }
 
-    @blueprint.delete("/visitors/<int:visitor_id>")
+    @blueprint.get("/accounts/<int:account_id>")
     @authorized
-    def delete_visitor(visitor_id):
-        if not 0 < visitor_id <= 2**63 - 1:
+    def account_details(account_id):
+        if not 0 < account_id <= 2**63 - 1:
+            raise InputError("Compte introuvable.", 404)
+        with account_transaction(database) as connection:
+            account = find_maintenance_account(connection, account_id)
+            visitors = connection.execute(
+                """SELECT visitors.id, visitors.ip, latest.connected_at AS last_connected_at
+                   FROM visitors JOIN connections AS latest ON latest.id = (
+                       SELECT id FROM connections WHERE visitor_id = visitors.id ORDER BY id DESC LIMIT 1
+                   ) WHERE visitors.account_id = ? ORDER BY latest.id DESC""", (account_id,),
+            ).fetchall()
+        return {
+            **dict(account), "visitors": [dict(row) for row in visitors], "is_current": account_id == g.account["id"],
+        }
+
+    @blueprint.delete("/visitors/<int:visitor_id>")
+    @blueprint.delete("/accounts/<int:account_id>/visitors/<int:visitor_id>")
+    @authorized
+    def delete_visitor(visitor_id, account_id=None):
+        if not 0 < visitor_id <= 2**63 - 1 or (account_id is not None and not 0 < account_id <= 2**63 - 1):
             raise InputError("Identifiant introuvable.", 404)
-        with transaction(database, write=True) as connection:
-            connection.execute("DELETE FROM connections WHERE visitor_id = ?", (visitor_id,))
-            deleted = connection.execute("DELETE FROM visitors WHERE id = ?", (visitor_id,))
-            if deleted.rowcount == 0:
+        with account_transaction(database, write=True) as connection:
+            visitor = connection.execute(
+                "SELECT id FROM visitors WHERE id = ? AND (? IS NULL OR account_id = ?)",
+                (visitor_id, account_id, account_id),
+            ).fetchone()
+            if visitor is None:
                 raise InputError("Identifiant introuvable.", 404)
+            connection.execute("DELETE FROM connections WHERE visitor_id = ?", (visitor_id,))
+            connection.execute("DELETE FROM visitors WHERE id = ?", (visitor_id,))
+        return "", 204
+
+    @blueprint.delete("/accounts/<int:account_id>")
+    @authorized
+    def delete_account(account_id):
+        if not 0 < account_id <= 2**63 - 1:
+            raise InputError("Compte introuvable.", 404)
+        with account_transaction(database, write=True) as connection:
+            find_maintenance_account(connection, account_id)
+            connection.execute(
+                "DELETE FROM connections WHERE visitor_id IN (SELECT id FROM visitors WHERE account_id = ?)",
+                (account_id,),
+            )
+            connection.execute("DELETE FROM visitors WHERE account_id = ?", (account_id,))
+            connection.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        if account_id == g.account["id"]:
+            return clear_login(make_response("", 204))
         return "", 204
 
     @blueprint.delete("/data/<scope>")
@@ -144,27 +174,36 @@ def maintenance_routes(database, mode, json_input):
         tables = RESET_TABLES.get(scope)
         if tables is None:
             raise InputError("Catégorie introuvable.", 404)
-        with transaction(database, write=True) as connection:
+        with account_transaction(database, write=True) as connection:
             if scope == "planning":
                 connection.execute(
-                    """INSERT INTO app_preferences(key, value)
-                       SELECT 'timezone', timezone FROM settings WHERE id = 1
-                       ON CONFLICT(key) DO UPDATE SET value = excluded.value"""
+                    """INSERT INTO app_preferences(workspace_id, key, value)
+                       SELECT workspace_id, 'timezone', timezone FROM settings WHERE workspace_id = ?
+                       ON CONFLICT(workspace_id, key) DO UPDATE SET value = excluded.value""", (g.workspace,),
                 )
             for table in tables:
-                connection.execute(f"DELETE FROM {table}")
+                connection.execute(f"DELETE FROM {table} WHERE workspace_id = ?", (g.workspace,))
         return "", 204
 
     @blueprint.get("/data")
     @authorized
     def data():
-        with transaction(database) as connection:
-            data = {
-                table: [dict(row) for row in connection.execute(f"SELECT * FROM {table}")]
-                for table in RAW_TABLES
-            }
+        with account_transaction(database) as connection:
+            data = {}
+            for table in RAW_TABLES:
+                if table in WORKSPACE_TABLES:
+                    rows = connection.execute(f"SELECT * FROM {table} WHERE workspace_id = ?", (g.workspace,))
+                elif table == "carer_days":
+                    rows = connection.execute(
+                        "SELECT carer_days.* FROM carer_days JOIN carers ON carer_id = carers.id WHERE workspace_id = ?",
+                        (g.workspace,),
+                    )
+                else:
+                    rows = connection.execute(f"SELECT * FROM {table}")
+                data[table] = [dict(row) for row in rows]
             data["task_photos"] = [dict(row) for row in connection.execute(
-                "SELECT id, task_id, filename, mime FROM task_photos ORDER BY id"
+                """SELECT task_photos.id, task_id, filename, mime FROM task_photos
+                   JOIN tasks ON task_id = tasks.id WHERE workspace_id = ? ORDER BY task_photos.id""", (g.workspace,),
             )]
             return data
 

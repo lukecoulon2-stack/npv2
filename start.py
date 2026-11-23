@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Installe, initialise et démarre Naoning."""
+"""Installe, initialise et démarre Planneli."""
 import argparse
 import errno
 import hashlib
@@ -48,7 +48,7 @@ def environment_python():
             stamp.unlink(missing_ok=True)
             subprocess.run([sys.executable, "-m", "venv", str(ENVIRONMENT)], check=True)
         if not stamp.is_file() or stamp.read_text(encoding="utf-8") != digest:
-            print("Installation des dépendances de Naoning…", flush=True)
+            print("Installation des dépendances de Planneli…", flush=True)
             subprocess.run([str(binary), "-m", "ensurepip"], check=True, stdout=subprocess.DEVNULL)
             subprocess.run(
                 [str(binary), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(REQUIREMENTS)],
@@ -56,6 +56,12 @@ def environment_python():
             )
             stamp.write_text(digest, encoding="utf-8")
     return binary
+
+
+def activate_environment():
+    binary = environment_python()
+    if Path(sys.prefix).resolve() != ENVIRONMENT.resolve():
+        os.execv(str(binary), [str(binary), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
 def lan_address():
@@ -83,7 +89,7 @@ def serve(config, data_dir):
     app = create_app(database, config.mode)
     try:
         server = create_server(
-            app, host=config.host, port=config.port, ident="Naoning",
+            app, host=config.host, port=config.port, ident="Planneli",
             threads=4, max_request_body_size=PHOTO_REQUEST_LIMIT,
             trusted_proxy="127.0.0.1", trusted_proxy_headers={"x-forwarded-for", "x-forwarded-proto"},
         )
@@ -98,7 +104,7 @@ def serve(config, data_dir):
     try:
         initialize(database)
         local = {"0.0.0.0": "127.0.0.1", "::": "::1", "*": "127.0.0.1"}.get(config.host, config.host)
-        print(f"Naoning · {url(local, config.port)}", flush=True)
+        print(f"Planneli · {url(local, config.port)}", flush=True)
         if config.host == "0.0.0.0":
             print(f"Sur le même Wi-Fi · {url(lan_address(), config.port)}", flush=True)
         if config.mode == "bench":
@@ -122,11 +128,12 @@ def main():
     maintenance = parser.add_mutually_exclusive_group()
     maintenance.add_argument("--backup", type=Path, metavar="FICHIER", help="Créer une sauvegarde SQLite.")
     maintenance.add_argument("--restore", type=Path, metavar="FICHIER", help="Restaurer une sauvegarde SQLite.")
+    maintenance.add_argument("--claim-existing", metavar="UTILISATEUR", help="Rattacher les anciennes données à ce compte.")
     args = parser.parse_args()
 
     try:
         if sys.version_info < (3, 10):
-            raise ValueError("Naoning nécessite Python 3.10 ou une version ultérieure.")
+            raise ValueError("Planneli nécessite Python 3.10 ou une version ultérieure.")
         config = read_config(args.config.resolve())
         if args.backup or args.restore:
             if config.mode != "normal":
@@ -145,6 +152,19 @@ def main():
                     print(f"Copie de la base précédente · {previous}")
             return 0
 
+        if args.claim_existing is not None:
+            if config.mode != "normal":
+                raise ValueError("Le rattachement des anciennes données utilise le mode normal.")
+            activate_environment()
+
+            from planning.accounts import claim_existing
+
+            database = config.data_dir / DATABASE_NAME
+            initialize(database)
+            claim_existing(database, args.claim_existing)
+            print(f"Anciennes données rattachées · {args.claim_existing}")
+            return 0
+
         if config.mode == "normal":
             with installation_lock():
                 if pending_revision(PROJECT):
@@ -158,13 +178,10 @@ def main():
                         raise ValueError("Arrêtez le serveur en cours avant d’appliquer la mise à jour.")
                 revision = apply_pending(PROJECT)
             if revision:
-                print(f"Mise à jour Naoning appliquée · {revision[:12]}", flush=True)
+                print(f"Mise à jour Planneli appliquée · {revision[:12]}", flush=True)
                 os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
 
-        binary = environment_python()
-        if Path(sys.prefix).resolve() != ENVIRONMENT.resolve():
-            os.execv(str(binary), [str(binary), str(Path(__file__).resolve()), *sys.argv[1:]])
-
+        activate_environment()
         signal.signal(signal.SIGTERM, stop_on_signal)
         if config.mode == "bench":
             with tempfile.TemporaryDirectory(prefix="tempo-bench-") as directory:
@@ -174,7 +191,7 @@ def main():
     except KeyboardInterrupt:
         return 0
     except (ValueError, OSError, sqlite3.Error, subprocess.CalledProcessError) as error:
-        print(f"Naoning · {error}", file=sys.stderr)
+        print(f"Planneli · {error}", file=sys.stderr)
         return 1
     return 0
 
